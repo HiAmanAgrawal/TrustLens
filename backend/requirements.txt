@@ -1,0 +1,26 @@
+# Pinned at major versions; tighten to exact versions once we have a lockfile.
+# Keep this list small — every dep is a security and maintenance cost.
+
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+pydantic>=2.7,<3.0
+pydantic-settings>=2.3,<3.0
+python-multipart>=0.0.9            # FastAPI needs this for file uploads
+httpx>=0.27,<1.0                   # async HTTP client (webhook media downloads, outbound calls)
+
+# Image / barcode / OCR / scraping deps. The actual logic lives in services/,
+# but we list everything here so `pip install -r` boots a runnable dev env.
+pillow>=10.3
+opencv-contrib-python>=4.10        # primary QR decoder (WeChat detector — robust on warped/foil QRs)
+pyzbar>=0.1.9                      # fallback decoder for non-QR symbologies (EAN13, Code128, ...). Needs libzbar0 / `brew install zbar`
+pytesseract>=0.3.10                # requires the `tesseract` system binary
+google-genai>=0.3                  # Google ADK Vision fallback (Gemini)
+playwright>=1.45                   # also needs `playwright install chromium`
+rapidfuzz>=3.6                     # fast fuzzy string matching for the matcher
+
+# Dev / test
+pytest>=8.0
+pytest-asyncio>=0.23
+httpx>=0.27                        # already required by FastAPI TestClient
+qrcode[pil]>=7.4                   # tests generate QRs to round-trip through the decoder
+ruff>=0.5

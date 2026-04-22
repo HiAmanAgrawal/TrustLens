@@ -1,0 +1,133 @@
+# =============================================================================
+# TrustLens — repo-wide gitignore.
+#
+# Grouped by tool / concern so additions stay readable. When in doubt:
+#   - Generated artefacts? Ignore.
+#   - Secrets? Ignore (and add a *.example mirror to track the schema).
+#   - Anything > 1 MB that can be regenerated? Ignore.
+# =============================================================================
+
+
+# --- Secrets -----------------------------------------------------------------
+# Track only the example file; never the real one.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+secrets/
+.secrets/
+
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+*.egg
+pip-wheel-metadata/
+
+
+# --- Notebooks (if any sneak in) --------------------------------------------
+.ipynb_checkpoints/
+
+
+# --- Playwright --------------------------------------------------------------
+# The browser binaries live in ~/.cache/ms-playwright/ — outside the repo.
+# These are the per-run debug artefacts that *do* land in the repo dir.
+playwright-report/
+test-results/
+trace.zip
+videos/
+
+
+# --- TrustLens runtime caches -----------------------------------------------
+# WeChat QR detector models auto-download to ~/.cache/trustlens/ by default,
+# but if a developer overrides $TRUSTLENS_WECHAT_MODEL_DIR to a repo-relative
+# path we don't want the ~2 MB caffemodel files committed.
+.cache/
+.trustlens-cache/
+models/wechat_qr/
+
+# Tesseract / OCR debug output we sometimes dump while tuning.
+debug-ocr/
+*.tess.png
+
+# Scraper debug screenshots / HTML dumps.
+scraper-debug/
+*.scraper.html
+*.scraper.png
+
+
+# --- Node / Next.js (frontend, when it lands) -------------------------------
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+.yarn/cache
+.yarn/install-state.gz
+
+
+# --- Docker / build artefacts -----------------------------------------------
+*.pid
+*.tar
+*.tar.gz
+*.tgz
+
+
+# --- Editors / IDE -----------------------------------------------------------
+.vscode/
+!.vscode/extensions.json     # share recommended extensions, nothing else
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.history/
+
+
+# --- OS junk -----------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+
+# --- Logs / runtime ----------------------------------------------------------
+*.log
+logs/
+tmp/
+.tmp/
+
+
+# --- Local-only experiments --------------------------------------------------
+# Convention: anything starting with `scratch_` is personal, never committed.
+scratch_*
+*.scratch
+sandbox/
