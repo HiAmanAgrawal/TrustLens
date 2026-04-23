@@ -65,16 +65,40 @@ These rules keep modules small, testable, and easy to swap.
 
 ---
 
-## Quickstart (once code is filled in)
+## Quickstart
+
+Full backend setup (system deps, Playwright, env vars) is documented in [`backend/README.md`](backend/README.md), including **Windows**.
+
+### macOS / Linux
 
 ```bash
-# Backend
 cd backend
-python -m venv .venv && source .venv/bin/activate
+python3.11 -m venv .venv
+source .venv/bin/activate          # Linux / macOS
 pip install -r requirements.txt
+playwright install chromium        # first time only; see backend README
 uvicorn app.main:app --reload
+```
 
-# Frontend (after running create-next-app inside frontend/)
+On macOS you can use [`scripts/dev.sh`](scripts/dev.sh) to start `uvicorn` from the venv without pyenv shims.
+
+### Windows (PowerShell or cmd)
+
+```powershell
+cd backend
+py -3.11 -m venv .venv
+.\.venv\Scripts\activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+playwright install chromium
+.\.venv\Scripts\uvicorn app.main:app --reload
+```
+
+Use **`.\.venv\Scripts\`** instead of `.venv/bin/` for activate, pip, and uvicorn. If ZBar or Tesseract are painful to install natively, use **WSL2 (Ubuntu)** and follow the Linux steps in `backend/README.md`.
+
+### Frontend (when present)
+
+```bash
 cd frontend
 npm install
 npm run dev
@@ -84,4 +108,4 @@ npm run dev
 
 ## Status
 
-This commit ships the **folder structure, READMEs, and stub files only**. No business logic is implemented yet — every Python entry point is a typed signature with a `TODO` comment describing intent. See [`docs/roadmap.md`](docs/roadmap.md) for what comes next.
+Backend image/code verification, OCR chain, scraper, matcher, and API routes are implemented; WhatsApp and the Next.js frontend remain planned. See [`TODO.md`](TODO.md) and [`docs/roadmap.md`](docs/roadmap.md).

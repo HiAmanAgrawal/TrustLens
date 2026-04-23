@@ -11,6 +11,7 @@ makes it trivial to unit-test and predictable to debug.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -53,17 +54,21 @@ _BATCH_RE = re.compile(
     r"(?:\bbatch\b|\blot\b|\bb\.)\s*(?:no\.?|number)?\s*[:\-]?\s*\n?\s*([A-Z0-9\-]{3,})",
     re.I,
 )
-# Date capture: letters, digits, '.', '/', '-', and at most one internal
-# space — enough for "MAR.2025", "MAY 25", "01/2024", "12-2026". We
-# explicitly stop before another all-caps keyword (EXP / MFG / DT) so a
-# label like "MFG: MAY 25 EXP: ..." doesn't bleed into the next field.
+# Date capture: must look like an actual date so a stray "Mfg. Lic. No."
+# never gets mistaken for a manufacturing date. Three accepted shapes:
+#   - month abbreviation + year, optional day prefix:  MAR.2025, MAY 25,
+#     15-MAR-2025, APR. 28
+#   - numeric month + year:                            01/2024, 12-2026
+# Anything that doesn't fit one of those (e.g. "LIC. NO", "M/600/2012")
+# falls through and the regex keeps searching for the *real* date later
+# in the text.
+_MONTH = r"(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)"
 _DATE_VALUE = (
-    # First token (e.g. "MAR.2025" or "MAY"), optionally followed by ONE
-    # space and a second token (e.g. "MAY 25"). Crucially a *literal* space,
-    # not generic whitespace — \s would let us swallow a newline + the next
-    # field's keyword.
-    r"([0-9A-Z][0-9A-Z./\-]{1,8}(?: [0-9A-Z][0-9A-Z./\-]{0,8})?)"
-    r"(?=\s|$|[.,;])"
+    r"("
+    r"(?:\d{1,2}[./\-\s])?" + _MONTH + r"[.\s/\-]*\d{2,4}"
+    r"|"
+    r"(?:0?[1-9]|1[0-2])[./\-]\d{2,4}"
+    r")"
 )
 _MFG_DATE_RE = re.compile(
     # "Mfg Date:", "Mfd:", "Manufactured on:", "Manufacturing Date:",
@@ -99,6 +104,15 @@ _BRAND_RE = re.compile(
 _GENERIC_NAME_RE = re.compile(
     r"(?:proper\s+(?:and\s+generic\s+)?name\s+of\s+the\s+drug|generic\s+name)"
     r"\s*[:\-]?\s*\n?\s*([A-Z][A-Za-z0-9 .,'\-]{3,60})",
+    re.I,
+)
+# Manufacturing license number(s). Real labels often show two adjacent
+# codes — a primary licence ("M/600/2012") and a sub-code ("ML24F-0043/C")
+# on the same line. We capture both so neither can sneak through the
+# drug-name picker as a fake brand.
+_LIC_NO_RE = re.compile(
+    r"(?:mfg\.?\s*lic\.?\s*no\.?|manufacturing\s+licen[sc]e\s+(?:no\.?|number))"
+    r"\s*[:\-]?\s*\n?\s*([A-Z0-9/\-]+(?:[ \t]+[A-Z0-9/\-]+)?)",
     re.I,
 )
 
@@ -149,13 +163,16 @@ def _pick_drug_name(
     1. ``Brand Name:`` already extracted → use as-is.
     2. A "name of the drug" / "generic name" line (portal-style).
     3. A SKU-shaped token like ``DOLO-650`` (capitalised + contains a digit
-       or dash). These are almost always the brand name on a pack.
+       or dash). Among candidates we score by ``length × frequency`` because
+       brand names get reprinted 5–15× on a typical pack while one-off
+       codes (license numbers, batch ids) appear once.
     4. The longest capitalised alphabetic token (e.g. ``Cetirizine``),
        skipping obvious non-drug words.
 
     ``exclude`` lets callers pass in tokens that are *known* to be other
-    fields (most importantly, the batch number) so the SKU heuristic doesn't
-    accidentally return them.
+    fields (most importantly, the batch number). License-number tokens
+    are auto-added to the exclusion set so an embossed code like
+    ``ML24F-0043`` can't pose as a brand.
     """
     if brand_hint:
         return brand_hint
@@ -163,6 +180,16 @@ def _pick_drug_name(
         return m.group(1).strip(" .,").strip()
 
     excluded = {(e or "").upper() for e in (exclude or set())}
+    excluded.discard("")
+    if lic := _LIC_NO_RE.search(text):
+        # Split the licence string on whitespace and '/' so each component
+        # ("M/600/2012", "ML24F-0043/C", "ML24F", "0043", "C") gets banned
+        # individually — that way a partial OCR of the same code can't
+        # slip through either.
+        for piece in re.split(r"[\s/]+", lic.group(1).upper()):
+            if piece:
+                excluded.add(piece)
+
     tokens = re.findall(r"\b[A-Z][A-Za-z0-9\-]{2,}\b", text)
 
     def _ok(tok: str) -> bool:
@@ -172,7 +199,8 @@ def _pick_drug_name(
         t for t in tokens if _ok(t) and (any(c.isdigit() for c in t) or "-" in t)
     ]
     if sku_like:
-        return max(sku_like, key=len)
+        freq = Counter(t.upper() for t in sku_like)
+        return max(sku_like, key=lambda t: len(t) * freq[t.upper()])
 
     plain = [t for t in tokens if _ok(t)]
     return max(plain, key=len) if plain else ""
@@ -214,11 +242,53 @@ _STOPWORDS = {
 # --- Comparison --------------------------------------------------------------
 
 
+def _squash(s: str) -> str:
+    """Strip whitespace and uppercase — used for fields where layout drift
+    (extra spaces, casing) shouldn't be treated as a content difference.
+    """
+    return re.sub(r"\s+", "", s).upper()
+
+
+def _best_code_score(a: str, b: str) -> float:
+    """Best of plain ``ratio`` and ``partial_ratio`` after squashing.
+
+    ``partial_ratio`` rescues prefix/suffix drift ("ABC123" vs "X-ABC123")
+    while ``ratio`` rescues single-character drops in the middle
+    ("DBS3975" vs "DOBS3975"). Taking the max means we tolerate either
+    failure mode without manually picking which one applies per field.
+    """
+    a_s, b_s = _squash(a), _squash(b)
+    return max(fuzz.ratio(a_s, b_s), fuzz.partial_ratio(a_s, b_s))
+
+
+# Per-field scorer table. Each scorer returns a 0–100 ratio.
+#   - batch / drug_name use ``_best_code_score`` to absorb the two common
+#     OCR drift patterns (interior char drops, edge prefix/suffix tweaks)
+#     plus casing/punctuation drift via the squash step.
+#   - dates / brand_name use plain ``ratio`` after squashing — they're
+#     short atomic codes where a missing char *should* lower the score.
+#   - Long descriptive fields fall through to ``token_set_ratio`` (default)
+#     because real cases involve reordered/abbreviated words, e.g.
+#     "MICRO LABS LIMITED" vs "MICROLABS LIMITED".
+_FIELD_SCORERS: dict[str, Any] = {
+    "batch":      _best_code_score,
+    "drug_name":  _best_code_score,
+    "brand_name": lambda a, b: fuzz.ratio(_squash(a), _squash(b)),
+    "mfg_date":   lambda a, b: fuzz.ratio(_squash(a), _squash(b)),
+    "exp_date":   lambda a, b: fuzz.ratio(_squash(a), _squash(b)),
+}
+
+
+def _default_scorer(a: str, b: str) -> float:
+    return fuzz.token_set_ratio(a, b)
+
+
 def _compare(label: dict[str, str], page: dict[str, str]) -> tuple[float, list[str]]:
     """Fuzzy-compare overlapping fields. Returns (mean_ratio_0_to_1, evidence).
 
-    ``token_set_ratio`` handles re-ordered tokens, punctuation drift, and
-    pluralisation — all common between a printed label and a web page.
+    Scoring is per-field via :data:`_FIELD_SCORERS`; see that table for the
+    rationale behind each choice. The default scorer is
+    ``token_set_ratio`` for descriptive fields (manufacturer, generic name).
     """
     shared = sorted(set(label) & set(page))
     if not shared:
@@ -227,7 +297,8 @@ def _compare(label: dict[str, str], page: dict[str, str]) -> tuple[float, list[s
     ratios: list[float] = []
     evidence: list[str] = []
     for key in shared:
-        ratio = fuzz.token_set_ratio(label[key], page[key]) / 100.0
+        scorer = _FIELD_SCORERS.get(key, _default_scorer)
+        ratio = scorer(label[key], page[key]) / 100.0
         ratios.append(ratio)
         evidence.append(f"{key}: label={label[key]!r} vs page={page[key]!r} ({int(ratio * 100)}%)")
 
