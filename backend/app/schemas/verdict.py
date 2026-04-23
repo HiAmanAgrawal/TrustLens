@@ -17,6 +17,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.grocery import Category, GroceryAnalysis
 from app.schemas.status import Note, StatusCode
 
 
@@ -78,3 +79,20 @@ class VerdictResponse(BaseModel):
     page: PageInfo | None = None
     label_fields: dict[str, str] = Field(default_factory=dict)
     page_fields: dict[str, str] = Field(default_factory=dict)
+
+    category: Category = Field(
+        default="pharma",
+        description=(
+            "Which analysis path was used: ``pharma`` (label-vs-portal compare), "
+            "``grocery`` (static label analysis + FSSAI verify), or ``unknown`` "
+            "(best-effort). Defaults to ``pharma`` so existing clients are unaffected."
+        ),
+    )
+    grocery: GroceryAnalysis | None = Field(
+        default=None,
+        description=(
+            "Populated only when ``category == 'grocery'``. Contains per-finding "
+            "details from the grocery analyser; ``notes`` mirrors the same items "
+            "in the timeline-style list that all clients already read."
+        ),
+    )

@@ -14,9 +14,12 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from app.schemas.grocery import Category, GroceryAnalysis
 from app.schemas.status import MESSAGES, Note, StatusCode, make_note
 from app.schemas.verdict import BarcodeInfo, OcrInfo, PageInfo, VerdictResponse
+from services import classifier
 from services.barcode import decoder as barcode_decoder
+from services.grocery import analyzer as grocery_analyzer
 from services.matcher import engine as matcher_engine
 from services.matcher.engine import Verdict
 from services.ocr import extractor as ocr_extractor
@@ -32,24 +35,52 @@ _SCRAPE_TIMEOUT_S = 20.0
 
 
 async def verify_image(image_bytes: bytes) -> VerdictResponse:
-    """Image input path: decode barcode + OCR in parallel, scrape if URL, match."""
+    """Image input path: decode barcode + OCR in parallel, then route by category.
+
+    Two branches share the same response shape:
+
+    - **pharma / unknown**: scrape the manufacturer portal (when the QR is a
+      URL) and run the rule-based label-vs-page matcher.
+    - **grocery**: skip the portal scrape — there is none — and run the
+      static grocery analyser (dates, ingredients, nutrition, claims, FSSAI).
+
+    The classifier defaults to ``"pharma"``-leaning for ambiguous text, so
+    existing pharma traffic keeps the same behaviour. ``"unknown"`` items
+    still go through the matcher (best-effort) so we never silently skip
+    work on a real label.
+    """
     barcode, ocr = await asyncio.gather(
         # Decoders are sync C-bound work; offload so we don't stall the loop.
         asyncio.to_thread(barcode_decoder.decode, image_bytes),
         ocr_extractor.extract_text(image_bytes),
     )
-    # Only feed the scraper a payload we actually decoded. A
-    # 'detected_undecoded' result means the QR exists but its data is unreadable —
-    # we surface that in the response so the user knows to retake the photo, but
-    # it isn't a usable URL.
     decoded_payload = barcode.payload if (barcode and barcode.is_decoded) else None
+
+    category = classifier.classify(
+        barcode_payload=decoded_payload,
+        barcode_symbology=barcode.symbology if barcode else None,
+        ocr_text=ocr.text if ocr else None,
+    )
+
+    if category == "grocery":
+        grocery_result = await grocery_analyzer.analyze(ocr.text or "")
+        verdict = _verdict_from_grocery(grocery_result, ocr_text=ocr.text)
+        return _to_response(
+            verdict,
+            barcode=barcode,
+            ocr=ocr,
+            page=None,
+            category=category,
+            grocery=grocery_result,
+        )
+
     page = await _maybe_scrape(decoded_payload)
     verdict = await matcher_engine.match(
         barcode_payload=decoded_payload,
         ocr_text=ocr.text if ocr.text else None,
         scrape_data=page.fields if page and page.status == "ok" else None,
     )
-    return _to_response(verdict, barcode=barcode, ocr=ocr, page=page)
+    return _to_response(verdict, barcode=barcode, ocr=ocr, page=page, category=category)
 
 
 async def verify_code(code: str) -> VerdictResponse:
@@ -59,6 +90,9 @@ async def verify_code(code: str) -> VerdictResponse:
     from an invoice, ...). If it's a URL we still scrape — that's the only
     side we have to compare against here, so a verdict will land at
     "unverifiable" without it.
+
+    No grocery analysis on this path: there's no OCR'd label to inspect,
+    so we always treat the request as pharma.
     """
     page = await _maybe_scrape(code)
     verdict = await matcher_engine.match(
@@ -71,7 +105,7 @@ async def verify_code(code: str) -> VerdictResponse:
     barcode = barcode_decoder.BarcodeResult(
         payload=code, symbology="USER_INPUT", rotation=0, status="decoded"
     )
-    return _to_response(verdict, barcode=barcode, ocr=None, page=page)
+    return _to_response(verdict, barcode=barcode, ocr=None, page=page, category="pharma")
 
 
 async def _maybe_scrape(payload: str | None) -> ScrapeResult | None:
@@ -134,6 +168,79 @@ _VERDICT_TO_CODE: dict[str, StatusCode] = {
     "unverifiable": StatusCode.MATCH_UNVERIFIABLE,
 }
 
+# Routing -> Note. These are info-level and just tell the client which
+# branch ran, so they don't dominate severity-based status picking.
+_CATEGORY_TO_CODE: dict[Category, StatusCode] = {
+    "pharma": StatusCode.CATEGORY_PHARMA,
+    "grocery": StatusCode.CATEGORY_GROCERY,
+    "unknown": StatusCode.CATEGORY_UNKNOWN,
+}
+
+# Grocery risk-band -> matcher verdict label. We reuse the matcher's
+# verdict shape so /images responses stay polymorphic-but-consistent;
+# the per-finding detail lives in ``VerdictResponse.grocery``.
+_RISK_TO_VERDICT: dict[str, str] = {
+    "high": "high_risk",
+    "medium": "caution",
+    "low": "safe",
+    "unknown": "unverifiable",
+}
+
+# Score buckets for grocery — same 0-10 scale as pharma so the UI's
+# numeric display works without branching.
+_RISK_TO_SCORE: dict[str, int] = {
+    "high": 2,
+    "medium": 5,
+    "low": 9,
+    "unknown": 0,
+}
+
+
+def _verdict_from_grocery(grocery: GroceryAnalysis, *, ocr_text: str | None) -> Verdict:
+    """Synthesise a :class:`Verdict` from a :class:`GroceryAnalysis`.
+
+    The grocery analyser produces structured findings; the existing
+    response shape expects a ``Verdict`` with ``score``, ``verdict``,
+    ``summary``, and ``evidence``. Mapping is intentionally simple so
+    the two branches feel consistent in the UI:
+
+    - ``risk_band`` collapses onto the matcher's verdict labels
+      (``high → high_risk``, etc.).
+    - Score buckets pick a representative midpoint of each band.
+    - Evidence is the per-finding ``"message — quoted_evidence"`` strings
+      so the same UI element that renders pharma evidence renders these.
+    """
+    verdict_label = _RISK_TO_VERDICT.get(grocery.risk_band, "unverifiable")
+    score = _RISK_TO_SCORE.get(grocery.risk_band, 0)
+    summary = _GROCERY_SUMMARIES.get(grocery.risk_band, "Grocery analysis completed.")
+
+    evidence: list[str] = []
+    for finding in grocery.findings:
+        if finding.evidence:
+            evidence.append(f"{finding.message} ({finding.evidence})")
+        else:
+            evidence.append(finding.message)
+
+    return Verdict(
+        score=score,
+        verdict=verdict_label,  # type: ignore[arg-type]
+        summary=summary,
+        evidence=evidence,
+        barcode_payload=None,
+        label_text=ocr_text,
+        page_text=None,
+        label_fields={},
+        page_fields={},
+    )
+
+
+_GROCERY_SUMMARIES: dict[str, str] = {
+    "high": "We found one or more serious issues with this grocery label.",
+    "medium": "We found a few things on this grocery label worth a closer look.",
+    "low": "Nothing concerning stood out on this grocery label.",
+    "unknown": "We couldn't read enough of the label to analyse it.",
+}
+
 
 def _collect_notes(
     *,
@@ -142,6 +249,8 @@ def _collect_notes(
     page: ScrapeResult | None,
     verdict: Verdict,
     user_supplied_code: bool,
+    category: Category,
+    grocery: GroceryAnalysis | None,
 ) -> list[Note]:
     """Build the ordered list of notes that explains what the pipeline did."""
     notes: list[Note] = []
@@ -159,6 +268,26 @@ def _collect_notes(
     if ocr is not None:
         ocr_code = _OCR_STATUS_TO_CODE.get(ocr.status, StatusCode.OCR_OK)
         notes.append(make_note(ocr_code))
+
+    # --- Routing --------------------------------------------------------
+    # Append the category note before any branch-specific notes so the UI
+    # sees "we treated this as X" alongside the per-stage outcomes.
+    notes.append(make_note(_CATEGORY_TO_CODE[category]))
+
+    if category == "grocery" and grocery is not None:
+        # Grocery branch: there is no scrape; the verdict comes from
+        # static analysis. Surface every finding as a Note so the existing
+        # notes-timeline UI shows the full breakdown without needing to
+        # learn the new ``grocery`` field.
+        for finding in grocery.findings:
+            notes.append(
+                Note(
+                    code=finding.code,
+                    message=finding.message,
+                    severity=finding.severity,
+                )
+            )
+        return notes
 
     # --- Scraper --------------------------------------------------------
     if page is None:
@@ -209,11 +338,22 @@ def _pick_top_status(notes: list[Note], verdict: Verdict) -> tuple[StatusCode, s
     and within a tier we prefer notes from earlier pipeline stages because
     that's usually where the user can intervene (retake a photo > tweak a
     URL > complain about a 5xx).
+
+    Category notes (``CATEGORY_PHARMA`` etc.) are routing-only and never
+    actionable by themselves, so they're filtered out of the top-status
+    selection — they still appear in the notes timeline.
     """
     severity_rank = {"error": 0, "warning": 1, "info": 2}
     actionable = [
         n for n in notes
-        if n.code not in (StatusCode.OCR_OK, StatusCode.SCRAPE_OK, StatusCode.MATCH_OK)
+        if n.code not in (
+            StatusCode.OCR_OK,
+            StatusCode.SCRAPE_OK,
+            StatusCode.MATCH_OK,
+            StatusCode.CATEGORY_PHARMA,
+            StatusCode.CATEGORY_GROCERY,
+            StatusCode.CATEGORY_UNKNOWN,
+        )
     ]
     if actionable:
         actionable.sort(key=lambda n: severity_rank.get(n.severity, 3))
@@ -235,6 +375,8 @@ def _to_response(
     barcode: barcode_decoder.BarcodeResult | None,
     ocr: OcrResult | None,
     page: ScrapeResult | None,
+    category: Category = "pharma",
+    grocery: GroceryAnalysis | None = None,
 ) -> VerdictResponse:
     """Adapt domain objects to the public Pydantic schema."""
     user_supplied_code = barcode is not None and barcode.symbology == "USER_INPUT"
@@ -245,6 +387,8 @@ def _to_response(
         page=page,
         verdict=verdict,
         user_supplied_code=user_supplied_code,
+        category=category,
+        grocery=grocery,
     )
     top_status, top_message = _pick_top_status(notes, verdict)
 
@@ -277,4 +421,6 @@ def _to_response(
         page=page_info,
         label_fields=verdict.label_fields,
         page_fields=verdict.page_fields,
+        category=category,
+        grocery=grocery,
     )

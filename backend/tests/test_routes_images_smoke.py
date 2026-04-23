@@ -366,3 +366,98 @@ def test_unknown_route_returns_envelope() -> None:
     assert response.status_code == 404
     body = response.json()
     assert body["status"] == "not_found"
+
+
+def test_post_images_routes_to_grocery_branch(monkeypatch) -> None:
+    """When OCR'd text reads as a grocery label, the response should:
+
+    - have ``category="grocery"``,
+    - have a populated ``grocery`` block with findings + a risk_band,
+    - skip the manufacturer scrape entirely (``page is None``),
+    - mirror the grocery findings into the notes timeline.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.services import pipeline as pipeline_mod
+    from services.barcode.decoder import BarcodeResult
+    from services.ocr.extractor import OcrResult
+
+    grocery_text = """
+    Crispy Cookies
+    NUTRITION INFORMATION (per 100 g)
+    Energy 480 kcal
+    Saturated Fat 8 g
+    Trans Fat 0.4 g
+    Sugars 30 g
+    Sodium 720 mg
+    Ingredients: Refined wheat flour, sugar, glucose syrup, dextrose,
+    maltodextrin, edible vegetable oil, salt.
+    Contains: Wheat, Milk.
+    Best Before 12 months from MFG.
+    MFG: 03/2026
+    Net Weight: 200 g
+    FSSAI Lic No: 12345678901234
+    """
+
+    def fake_decode(_image_bytes: bytes) -> BarcodeResult:
+        return BarcodeResult(
+            payload="08901302207789",
+            symbology="EAN13",
+            rotation=0,
+            status="decoded",
+        )
+
+    async def fake_ocr(_image_bytes: bytes) -> OcrResult:
+        return OcrResult(
+            text=grocery_text,
+            engine="tesseract",
+            confidence=0.9,
+            status="ok",
+        )
+
+    # Force the FSSAI online lookup off — we don't want the grocery smoke
+    # test to depend on Playwright or the network.
+    from services.grocery import analyzer as grocery_analyzer
+
+    real_analyze = grocery_analyzer.analyze
+
+    async def offline_analyze(text: str, **_kwargs):
+        return await real_analyze(text, online_fssai=False)
+
+    monkeypatch.setattr(pipeline_mod.barcode_decoder, "decode", fake_decode)
+    monkeypatch.setattr(pipeline_mod.ocr_extractor, "extract_text", fake_ocr)
+    monkeypatch.setattr(pipeline_mod.grocery_analyzer, "analyze", offline_analyze)
+
+    from app.main import create_app
+
+    client = TestClient(create_app())
+    response = client.post(
+        "/images", files={"file": ("pack.png", b"\x89PNG\r\n\x1a\n", "image/png")}
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    assert body["category"] == "grocery"
+    assert body["grocery"] is not None
+    grocery = body["grocery"]
+    assert grocery["risk_band"] in {"low", "medium", "high"}
+    assert grocery["fssai"] is not None
+    assert grocery["fssai"]["license_number"] == "12345678901234"
+    assert grocery["fssai"]["format_valid"] is True
+    assert grocery["fssai"]["online_status"] == "skipped"
+
+    finding_codes = {f["code"] for f in grocery["findings"]}
+    assert "high_sodium" in finding_codes
+    assert "high_sugar" in finding_codes
+    assert "trans_fat_present" in finding_codes
+    assert "hidden_sugars_found" in finding_codes
+    assert "allergen_declaration_found" in finding_codes
+
+    # Page-side scrape should have been skipped.
+    assert body["page"] is None
+
+    note_codes = [n["code"] for n in body["notes"]]
+    assert "category_grocery" in note_codes
+    # Findings should be mirrored into the notes timeline.
+    assert "high_sodium" in note_codes

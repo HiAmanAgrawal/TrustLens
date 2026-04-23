@@ -44,7 +44,9 @@ class Settings(BaseSettings):
 
     # --- Scraper / AI ---
     capsolver_api_key: str | None = None
-    # Google ADK / Gemini drives the OCR fallback when Tesseract confidence is poor.
+    # Google ADK / Gemini drives the PRIMARY OCR pass for both medicines
+    # and grocery items. Tesseract is the local fallback that runs when
+    # this key is missing or when Gemini fails (auth, rate limit, network).
     google_api_key: str | None = None
     google_vision_model: str = "gemini-2.5-flash"
     openai_api_key: str | None = None
