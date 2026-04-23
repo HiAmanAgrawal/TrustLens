@@ -119,7 +119,13 @@ def create_app() -> FastAPI:
     app.include_router(routes_codes.router, prefix="/codes", tags=["codes"])
     app.include_router(routes_whatsapp.router, prefix="/webhook/whatsapp", tags=["whatsapp"])
 
-    # TODO: register startup/shutdown hooks (httpx client, DB pool) here.
+    @app.on_event("shutdown")
+    async def _shutdown() -> None:
+        """Release adapter resources (HTTP clients, browser instances)."""
+        from services.whatsapp.send_receive import close as wa_close
+
+        await wa_close()
+
     _ = settings  # silence unused-warning until settings are actually consumed
 
     return app

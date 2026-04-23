@@ -302,10 +302,10 @@ def _try_pyzbar(image: Image.Image) -> BarcodeResult | None:
     """Fallback: pyzbar with a 4-rotation sweep + autocontrast."""
     try:
         from pyzbar import pyzbar
-    except ImportError:
-        # If neither WeChat nor pyzbar are available the route will surface
-        # 'no barcode' rather than crashing. Logged so it's diagnosable.
-        logger.warning("pyzbar not installed; barcode fallback disabled.")
+    except (ImportError, FileNotFoundError, OSError):
+        # pyzbar may be installed but libzbar DLL missing (FileNotFoundError
+        # on Windows). Gracefully degrade rather than crash.
+        logger.warning("pyzbar not available (missing libzbar DLL); barcode fallback disabled.")
         return None
 
     base = ImageOps.autocontrast(image.convert("L"))

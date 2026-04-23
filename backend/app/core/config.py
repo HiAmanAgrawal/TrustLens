@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 
-    # --- WhatsApp (provider-specific; only the chosen provider's vars are used) ---
+    # --- WhatsApp (Twilio) ---
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
     twilio_whatsapp_from: str | None = None
@@ -49,8 +49,6 @@ class Settings(BaseSettings):
     # this key is missing or when Gemini fails (auth, rate limit, network).
     google_api_key: str | None = None
     google_vision_model: str = "gemini-2.5-flash"
-    openai_api_key: str | None = None
-    anthropic_api_key: str | None = None
 
 
 @lru_cache

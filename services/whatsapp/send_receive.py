@@ -3,12 +3,20 @@
 The actual HTTP work is delegated to an adapter under ``adapters/``. This file
 intentionally knows nothing about Twilio / Meta / Unipile internals — it only
 defines the domain-level message shape and the dispatch entry points.
+
+Currently wired to the **Twilio** adapter. To swap providers, change the
+imports and adapter calls below — the rest of the codebase stays untouched.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import AsyncIterator, Literal
+
+from services.whatsapp.adapters import twilio_wa as twilio_adapter
+
+logger = logging.getLogger(__name__)
 
 
 # A single, transport-neutral message shape. Adapters convert their wire
@@ -23,31 +31,20 @@ class WhatsAppMessage:
     direction: Literal["in", "out"] = "in"
 
 
-async def send_message(to: str, body: str, media_url: str | None = None) -> None:
-    """Send a WhatsApp message via the configured provider.
-
-    TODO:
-      - Read provider choice from settings.
-      - Lazy-import the matching adapter so optional deps stay optional.
-      - Surface adapter errors as a small, typed exception (not raw httpx).
-    """
-    _ = (to, body, media_url)
-    raise NotImplementedError("Pick a provider and implement an adapter first.")
-
-
 async def receive_messages() -> AsyncIterator[WhatsAppMessage]:
     """Yield inbound messages.
 
-    For webhook-based providers (Twilio, Meta Cloud) this is normally unused —
-    the FastAPI webhook route ingests messages directly. We expose this hook
-    for adapters that support polling (or for tests) so the calling code stays
-    uniform.
-
-    TODO: implement once an adapter exists; for webhook providers this can
-    stay as ``raise NotImplementedError`` or drain an in-memory queue fed by
-    the webhook route.
+    For webhook-based providers (Twilio, Meta Cloud, Unipile) this is normally
+    unused — the FastAPI webhook route ingests messages directly. We expose
+    this hook for adapters that support polling (or for tests) so the calling
+    code stays uniform.
     """
     raise NotImplementedError
     # The unreachable yield below is required so Python recognises this as an
     # async generator at type-check time.
     yield  # type: ignore[unreachable]
+
+
+async def close() -> None:
+    """Shut down adapter resources (call on app shutdown)."""
+    await twilio_adapter.close()

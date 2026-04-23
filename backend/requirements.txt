@@ -7,6 +7,7 @@ pydantic>=2.7,<3.0
 pydantic-settings>=2.3,<3.0
 python-multipart>=0.0.9            # FastAPI needs this for file uploads
 httpx>=0.27,<1.0                   # async HTTP client (webhook media downloads, outbound calls)
+twilio>=9.0,<10.0                  # Twilio WhatsApp Sandbox / Business API
 
 # Image / barcode / OCR / scraping deps. The actual logic lives in services/,
 # but we list everything here so `pip install -r` boots a runnable dev env.

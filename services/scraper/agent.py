@@ -13,11 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:  # pragma: no cover — imports only used for type hints
-    from playwright.async_api import Browser
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -43,32 +41,57 @@ class ScrapeResult:
     error_detail: str | None = None  # short message for debugging / logging
 
 
-# Module-level browser singleton. Launching Chromium costs ~1–2 s; reusing the
-# same instance across requests is the single biggest perf win we can make.
-_browser: "Browser | None" = None
-_browser_lock = asyncio.Lock()
-_playwright_ctx = None  # opaque: holds the async_playwright() handle for shutdown
+# ---------------------------------------------------------------------------
+# Playwright singleton running in a dedicated thread.
+#
+# On Windows the default asyncio event loop (ProactorEventLoop used by
+# uvicorn) cannot spawn subprocesses from coroutines, which makes
+# ``async_playwright`` fail with ``NotImplementedError``.  We sidestep
+# this entirely by running Playwright's **sync** API in a background
+# daemon thread that owns its own (non-asyncio) context.  Every call
+# from the async world is dispatched to that thread via a Future.
+# ---------------------------------------------------------------------------
+_pw_lock = threading.Lock()
+_pw = None        # playwright sync context manager result
+_browser = None   # sync Browser instance
 
 
-async def _get_browser() -> "Browser":
-    """Lazily launch (and reuse) a Chromium instance.
-
-    The lock prevents two concurrent first-callers from racing to launch two
-    browsers and leaking one. Playwright is imported here (not at module top)
-    so the rest of the codebase still loads when Playwright isn't installed.
-    """
-    global _browser, _playwright_ctx
-
+def _ensure_browser():
+    """Lazily start Playwright + Chromium inside the calling thread (sync)."""
+    global _pw, _browser
     if _browser is not None:
         return _browser
-
-    from playwright.async_api import async_playwright
-
-    async with _browser_lock:
-        if _browser is None:  # double-check inside the lock
-            _playwright_ctx = await async_playwright().start()
-            _browser = await _playwright_ctx.chromium.launch(headless=True)
+    with _pw_lock:
+        if _browser is None:
+            from playwright.sync_api import sync_playwright
+            _pw = sync_playwright().start()
+            _browser = _pw.chromium.launch(headless=True)
     return _browser
+
+
+def _sync_scrape(url: str, timeout_ms: int) -> dict:
+    """Run the full scrape synchronously (meant to be called in a thread)."""
+    browser = _ensure_browser()
+    context = browser.new_context()
+    page = context.new_page()
+    try:
+        response = page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+        http_status = response.status if response else None
+        title = page.title()
+        visible_text: str = page.evaluate("() => document.body.innerText")
+        html = page.content()
+        return {
+            "title": title,
+            "visible_text": visible_text,
+            "html": html,
+            "http_status": http_status,
+            "error": None,
+        }
+    except Exception as exc:
+        return {"title": None, "visible_text": None, "html": None,
+                "http_status": None, "error": exc}
+    finally:
+        context.close()
 
 
 async def shutdown_browser() -> None:
@@ -77,13 +100,14 @@ async def shutdown_browser() -> None:
     FastAPI's ``app.on_event("shutdown")`` is the natural caller — wire it in
     when the app gets a real lifecycle.
     """
-    global _browser, _playwright_ctx
-    if _browser is not None:
-        await _browser.close()
-        _browser = None
-    if _playwright_ctx is not None:
-        await _playwright_ctx.stop()
-        _playwright_ctx = None
+    global _browser, _pw
+    with _pw_lock:
+        if _browser is not None:
+            _browser.close()
+            _browser = None
+        if _pw is not None:
+            _pw.stop()
+            _pw = None
 
 
 # Substrings that hint a CAPTCHA stands between us and the page content.
@@ -107,8 +131,11 @@ async def scrape_url(url: str, *, timeout_s: float = 30.0) -> ScrapeResult:
     Always returns a ``ScrapeResult`` — even on failure — with ``status``
     set so the caller can surface a specific error to the user.
     """
+    loop = asyncio.get_running_loop()
     try:
-        browser = await _get_browser()
+        result = await loop.run_in_executor(
+            None, _sync_scrape, url, int(timeout_s * 1000)
+        )
     except ImportError:
         logger.warning("Playwright not installed; scraper unavailable.")
         return ScrapeResult(url=url, status="browser_unavailable")
@@ -116,61 +143,48 @@ async def scrape_url(url: str, *, timeout_s: float = 30.0) -> ScrapeResult:
         logger.exception("Failed to launch headless browser.")
         return ScrapeResult(url=url, status="browser_unavailable", error_detail=str(exc))
 
-    context = await browser.new_context()
-    page = await context.new_page()
-    try:
-        try:
-            response = await page.goto(
-                url, wait_until="networkidle", timeout=int(timeout_s * 1000)
-            )
-        except Exception as exc:
-            return _classify_navigation_error(url, exc)
+    if result["error"] is not None:
+        return _classify_navigation_error(url, result["error"])
 
-        # 4xx/5xx upstream — return what we have but tag the status so the
-        # client can show "the manufacturer's site is down" instead of a
-        # vague "couldn't compare".
-        if response is not None and response.status >= 400:
-            return ScrapeResult(
-                url=url,
-                fields={},
-                raw_html=None,
-                captcha_solved=False,
-                status="http_error",
-                http_status=response.status,
-                error_detail=f"Target returned HTTP {response.status}",
-            )
+    # 4xx/5xx upstream — return what we have but tag the status so the
+    # client can show "the manufacturer's site is down" instead of a
+    # vague "couldn't compare".
+    if result["http_status"] is not None and result["http_status"] >= 400:
+        return ScrapeResult(
+            url=url,
+            fields={},
+            raw_html=None,
+            captcha_solved=False,
+            status="http_error",
+            http_status=result["http_status"],
+            error_detail=f"Target returned HTTP {result['http_status']}",
+        )
 
-        title = await page.title()
-        # ``innerText`` already collapses whitespace and skips ``display:none``
-        # blocks — much cleaner than parsing raw HTML.
-        visible_text: str = await page.evaluate("() => document.body.innerText")
-        html = await page.content()
+    title = result["title"] or ""
+    visible_text = result["visible_text"] or ""
+    html = result["html"] or ""
 
-        captcha_present = any(marker in html.lower() for marker in _CAPTCHA_MARKERS)
-        if captcha_present:
-            # TODO: route to CapSolver, inject the token, re-submit, then
-            # re-evaluate visible_text. For now we surface the page contents
-            # but flag the status so the matcher / UI can react.
-            logger.warning("CAPTCHA marker detected on %s; returning unverified page text.", url)
-            return ScrapeResult(
-                url=url,
-                fields={"title": title, "visible_text": visible_text},
-                raw_html=html,
-                captcha_solved=False,
-                status="captcha_blocked",
-            )
-
+    captcha_present = any(marker in html.lower() for marker in _CAPTCHA_MARKERS)
+    if captcha_present:
+        # TODO: route to CapSolver, inject the token, re-submit, then
+        # re-evaluate visible_text. For now we surface the page contents
+        # but flag the status so the matcher / UI can react.
+        logger.warning("CAPTCHA marker detected on %s; returning unverified page text.", url)
         return ScrapeResult(
             url=url,
             fields={"title": title, "visible_text": visible_text},
             raw_html=html,
             captcha_solved=False,
-            status="ok",
+            status="captcha_blocked",
         )
-    finally:
-        # Always tear the context down — leaking contexts eventually exhausts
-        # the browser's worker pool.
-        await context.close()
+
+    return ScrapeResult(
+        url=url,
+        fields={"title": title, "visible_text": visible_text},
+        raw_html=html,
+        captcha_solved=False,
+        status="ok",
+    )
 
 
 def _classify_navigation_error(url: str, exc: BaseException) -> ScrapeResult:

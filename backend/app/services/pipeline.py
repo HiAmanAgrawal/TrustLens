@@ -49,11 +49,22 @@ async def verify_image(image_bytes: bytes) -> VerdictResponse:
     still go through the matcher (best-effort) so we never silently skip
     work on a real label.
     """
+    logger.info("Pipeline: starting verify_image (%d bytes)", len(image_bytes))
+
     barcode, ocr = await asyncio.gather(
         # Decoders are sync C-bound work; offload so we don't stall the loop.
         asyncio.to_thread(barcode_decoder.decode, image_bytes),
         ocr_extractor.extract_text(image_bytes),
     )
+
+    logger.info("Pipeline: barcode=%s, ocr_engine=%s, ocr_status=%s, ocr_chars=%d",
+                barcode.status if barcode else "none",
+                ocr.engine, ocr.status, len(ocr.text))
+
+    # Only feed the scraper a payload we actually decoded. A
+    # 'detected_undecoded' result means the QR exists but its data is unreadable —
+    # we surface that in the response so the user knows to retake the photo, but
+    # it isn't a usable URL.
     decoded_payload = barcode.payload if (barcode and barcode.is_decoded) else None
 
     category = classifier.classify(
@@ -75,12 +86,23 @@ async def verify_image(image_bytes: bytes) -> VerdictResponse:
         )
 
     page = await _maybe_scrape(decoded_payload)
+
+    logger.info("Pipeline: scrape=%s, page_fields=%d",
+                page.status if page else "skipped",
+                len(page.fields) if page and page.fields else 0)
+
     verdict = await matcher_engine.match(
         barcode_payload=decoded_payload,
         ocr_text=ocr.text if ocr.text else None,
         scrape_data=page.fields if page and page.status == "ok" else None,
     )
-    return _to_response(verdict, barcode=barcode, ocr=ocr, page=page, category=category)
+
+    logger.info("Pipeline: verdict=%s, score=%d, label_fields=%s, page_fields=%s",
+                verdict.verdict, verdict.score,
+                list(verdict.label_fields.keys()),
+                list(verdict.page_fields.keys()))
+
+    return _to_response(verdict, barcode=barcode, ocr=ocr, page=page)
 
 
 async def verify_code(code: str) -> VerdictResponse:
