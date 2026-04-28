@@ -88,6 +88,28 @@ class Settings(BaseSettings):
     google_api_key: str | None = None
     google_vision_model: str = "gemini-2.5-flash"
 
+    # Anthropic Claude — product advisor agent backbone
+    anthropic_api_key: str | None = None
+
+    # -----------------------------------------------------------------------
+    # LM Studio (local OpenAI-compatible server)
+    #
+    # Run a local vision model for product label extraction without sending
+    # images to external APIs. Qwen2.5-VL / Qwen3-VL are recommended.
+    #
+    #   LM_STUDIO_BASE_URL=http://localhost:1234/v1
+    #   LM_STUDIO_VISION_MODEL=qwen2.5-vl-7b-instruct   # match what's loaded
+    #   LM_STUDIO_CHAT_MODEL=qwen3-8b                    # for product advisor
+    #
+    # LM Studio ignores the API key value — set any non-empty string.
+    # -----------------------------------------------------------------------
+    lm_studio_base_url: str = "http://localhost:1234/v1"
+    lm_studio_vision_model: str = "qwen2.5-vl-7b-instruct"
+    lm_studio_chat_model: str = "qwen3-8b"
+    lm_studio_api_key: str = "lm-studio"                  # any non-empty value works
+    lm_studio_timeout_s: float = 60.0                     # vision inference can be slow locally
+    lm_studio_health_timeout_s: float = 2.0               # quick ping before sending full request
+
     # OpenAI-compatible embedding endpoint (can be pointed at Supabase's
     # pgvector-compatible embedder or any local model).
     embedding_model: str = "text-embedding-3-small"

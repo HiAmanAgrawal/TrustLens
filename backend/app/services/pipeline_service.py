@@ -248,8 +248,10 @@ async def run_grocery_scan(
         ],
         fssai=fssai_schema,
         ingredients_count=groc_result.ingredients_count,
+        ingredients=groc_result.ingredients,
         allergen_warnings=groc_result.allergen_warnings,
         storage_warnings=[_storage_schema(w) for w in groc_result.storage_warnings],
+        product_extraction=_extraction_schema(groc_result.product_extraction),
         barcode_data=barcode_data,
         notes=groc_result.notes,
     )
@@ -408,8 +410,10 @@ async def run_unified_scan(
             ],
             fssai=fssai_s,
             ingredients_count=g.ingredients_count,
+            ingredients=g.ingredients,
             allergen_warnings=g.allergen_warnings,
             storage_warnings=[_storage_schema(w) for w in g.storage_warnings],
+            product_extraction=_extraction_schema(g.product_extraction),
             barcode_data=barcode_data,
             notes=g.notes,
         )
@@ -476,6 +480,47 @@ def _batch_info_schema(b: Any | None) -> Any | None:
         expiry_date=b.expiry_date,
         manufacture_date=b.manufacture_date,
         is_expired=b.is_expired,
+    )
+
+
+def _extraction_schema(ext: Any | None) -> Any | None:
+    """Convert a ProductExtraction dataclass to a ProductExtractionSchema Pydantic model."""
+    if ext is None or (hasattr(ext, "extraction_method") and ext.extraction_method == "failed"):
+        return None
+    from app.schemas.pipeline import NutritionSchema, ProductExtractionSchema
+    n = ext.nutrition
+    return ProductExtractionSchema(
+        brand_name=ext.brand_name,
+        product_name=ext.product_name,
+        product_type=ext.product_type,
+        ingredients=ext.ingredients or [],
+        ingredients_count=ext.ingredients_count,
+        nutrition=NutritionSchema(
+            calories_kcal=n.calories_kcal if n else None,
+            protein_g=n.protein_g if n else None,
+            total_fat_g=n.total_fat_g if n else None,
+            saturated_fat_g=n.saturated_fat_g if n else None,
+            carbohydrates_g=n.carbohydrates_g if n else None,
+            sugar_g=n.sugar_g if n else None,
+            dietary_fiber_g=n.dietary_fiber_g if n else None,
+            sodium_mg=n.sodium_mg if n else None,
+        ) if n else NutritionSchema(),
+        serving_size=ext.serving_size,
+        servings_per_pack=ext.servings_per_pack,
+        positives=ext.positives or [],
+        negatives=ext.negatives or [],
+        allergens_declared=ext.allergens_declared or [],
+        certifications=ext.certifications or [],
+        manufacturer=ext.manufacturer,
+        net_weight=ext.net_weight,
+        is_vegetarian=ext.is_vegetarian,
+        is_vegan=ext.is_vegan,
+        is_gluten_free=ext.is_gluten_free,
+        contains_added_sugar=ext.contains_added_sugar,
+        contains_preservatives=ext.contains_preservatives,
+        contains_artificial_colours=ext.contains_artificial_colours,
+        e_codes_found=ext.e_codes_found or [],
+        extraction_method=ext.extraction_method,
     )
 
 

@@ -73,12 +73,16 @@ class GroceryVerifyResult:
     # FSSAI verification
     fssai: FssaiVerifyResult | None = None
 
-    # Ingredients
+    # Ingredients — count from rule-based extractor, full list from Gemini
     ingredients_count: int | None = None
+    ingredients: list[str] = field(default_factory=list)
     allergen_warnings: list[str] = field(default_factory=list)
 
     # Storage
     storage_warnings: list[StorageWarning] = field(default_factory=list)
+
+    # Rich product extraction (Gemini Vision) — None if extraction failed
+    product_extraction: Any | None = None  # services.grocery.gemini_extract.ProductExtraction
 
     # Pipeline meta
     barcode_data: str | None = None
@@ -117,11 +121,30 @@ async def verify_grocery(
         barcode_data, bool(ocr_text), bool(image_bytes),
     )
 
-    # --- Step 1: OCR if text not provided ---
+    import asyncio
+
+    # --- Step 1: Run OCR + Gemini structured extraction concurrently ---
+    ocr_task = None
+    gemini_task = None
+
     if not ocr_text and image_bytes:
-        from services.ocr.extractor import extract_text
-        ocr_result = await extract_text(image_bytes)
-        ocr_text = ocr_result.text if ocr_result else None
+        async def _do_ocr() -> str | None:
+            from services.ocr.extractor import extract_text
+            r = await extract_text(image_bytes)
+            return r.text if r else None
+
+        ocr_task = asyncio.create_task(_do_ocr())
+
+    if image_bytes:
+        async def _do_gemini() -> Any:
+            from services.grocery.gemini_extract import extract_product_info
+            return await extract_product_info(image_bytes)
+
+        gemini_task = asyncio.create_task(_do_gemini())
+
+    # Await OCR result first (needed for rule-based analysis)
+    if ocr_task is not None:
+        ocr_text = await ocr_task
         logger.info("grocery_verify.ocr | chars=%d", len(ocr_text or ""))
 
     result = GroceryVerifyResult(
@@ -130,10 +153,23 @@ async def verify_grocery(
     )
 
     if not ocr_text or not ocr_text.strip():
+        # Even without OCR text, wait for Gemini and use its data
+        if gemini_task is not None:
+            extraction = await gemini_task
+            if extraction and extraction.extraction_method != "failed":
+                result.product_extraction = extraction
+                result.ingredients = extraction.ingredients
+                result.ingredients_count = extraction.ingredients_count
+                if extraction.brand_name or extraction.product_name:
+                    result.notes.append(
+                        f"Label text unreadable by OCR; Gemini extracted product info "
+                        f"({extraction.extraction_method})."
+                    )
+                return result
         result.notes.append("No label text found — could not analyze this product.")
         return result
 
-    # --- Step 2: Static grocery analysis ---
+    # --- Step 2: Static grocery analysis (rule-based) ---
     from services.grocery.analyzer import analyze
     analysis = await analyze(ocr_text, now=now, online_fssai=True)
     logger.info(
@@ -147,6 +183,45 @@ async def verify_grocery(
     result.dates = analysis.dates
     result.findings = [f.model_dump() for f in analysis.findings]
     result.ingredients_count = analysis.ingredients_count
+
+    # --- Step 2b: Merge Gemini Vision extraction ---
+    if gemini_task is not None:
+        try:
+            extraction = await gemini_task
+        except Exception as exc:
+            logger.warning("grocery_verify.gemini_task | failed: %s", exc)
+            extraction = None
+
+        if extraction and extraction.extraction_method != "failed":
+            result.product_extraction = extraction
+            result.ingredients = extraction.ingredients
+
+            # Fill in count when rule-based extractor returned None (most common case)
+            if result.ingredients_count is None and extraction.ingredients_count:
+                result.ingredients_count = extraction.ingredients_count
+                logger.info(
+                    "grocery_verify.merge | ingredients_count filled from gemini: %d",
+                    result.ingredients_count,
+                )
+
+            # Gemini FSSAI license overrides regex extraction when not already found
+            if extraction.fssai_license and not (analysis.fssai and analysis.fssai.license_number):
+                logger.info(
+                    "grocery_verify.merge | FSSAI license from gemini: %s",
+                    extraction.fssai_license,
+                )
+                # Patch ocr_text with the extracted number so _build_fssai_result can use it
+                ocr_text = ocr_text + f"\nFSSAI Lic No: {extraction.fssai_license}"
+
+            logger.info(
+                "grocery_verify.merge | method=%s brand=%r positives=%d negatives=%d",
+                extraction.extraction_method,
+                extraction.brand_name,
+                len(extraction.positives),
+                len(extraction.negatives),
+            )
+        else:
+            logger.warning("grocery_verify.merge | gemini extraction failed or unavailable")
 
     # --- Step 3: Expiry status (structured enum from dates findings) ---
     result.expiry_status = _derive_expiry_status(analysis)

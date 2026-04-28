@@ -109,6 +109,31 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
             logger.debug("database.session.closed")
 
 
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def get_async_session_context():
+    """
+    Async context manager for DB sessions outside of FastAPI's DI system.
+
+    Used by LangGraph agent tools that run outside a request context and
+    cannot use ``Depends(get_async_session)``.
+
+    Example::
+        async with get_async_session_context() as session:
+            result = await session.execute(...)
+    """
+    factory = get_session_factory()
+    async with factory() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
 async def close_engine() -> None:
     """
     Dispose the engine pool — call on app shutdown.

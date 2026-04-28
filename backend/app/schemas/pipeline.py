@@ -152,6 +152,59 @@ class FindingSchema(BaseModel):
     evidence: str | None = None
 
 
+class NutritionSchema(BaseModel):
+    """Per-100g nutrition values extracted by Gemini Vision."""
+    calories_kcal: float | None = None
+    protein_g: float | None = None
+    total_fat_g: float | None = None
+    saturated_fat_g: float | None = None
+    carbohydrates_g: float | None = None
+    sugar_g: float | None = None
+    dietary_fiber_g: float | None = None
+    sodium_mg: float | None = None
+
+
+class ProductExtractionSchema(BaseModel):
+    """
+    Structured product data extracted directly from the image by Gemini Vision.
+
+    Complements the rule-based GroceryAnalysis — provides ingredients list,
+    nutrition table, diet flags, and brand identity that regex cannot reliably
+    extract from free-form OCR text.
+    """
+    brand_name: str | None = None
+    product_name: str | None = None
+    product_type: str | None = None
+    ingredients: list[str] = Field(default_factory=list)
+    ingredients_count: int | None = None
+    nutrition: NutritionSchema = Field(default_factory=NutritionSchema)
+    serving_size: str | None = None
+    servings_per_pack: float | None = None
+    positives: list[str] = Field(
+        default_factory=list,
+        description="Genuinely good attributes the model identified (e.g. 'high fiber')",
+    )
+    negatives: list[str] = Field(
+        default_factory=list,
+        description="Health concerns identified (e.g. 'high sugar 15g/100g')",
+    )
+    allergens_declared: list[str] = Field(default_factory=list)
+    certifications: list[str] = Field(default_factory=list)
+    manufacturer: str | None = None
+    net_weight: str | None = None
+    serving_size_label: str | None = None
+    is_vegetarian: bool | None = None
+    is_vegan: bool | None = None
+    is_gluten_free: bool | None = None
+    contains_added_sugar: bool | None = None
+    contains_preservatives: bool | None = None
+    contains_artificial_colours: bool | None = None
+    e_codes_found: list[str] = Field(default_factory=list)
+    extraction_method: str = Field(
+        description="gemini | openai_compat | failed — which provider succeeded",
+    )
+
+
 class GroceryScanResponse(BaseModel):
     """Response for POST /v1/grocery/scan."""
     scan_type: Literal["grocery"] = "grocery"
@@ -166,11 +219,19 @@ class GroceryScanResponse(BaseModel):
     findings: list[FindingSchema] = Field(default_factory=list)
     fssai: FssaiVerifySchema | None = None
     ingredients_count: int | None = None
+    ingredients: list[str] = Field(
+        default_factory=list,
+        description="Full ingredients list extracted by Gemini Vision",
+    )
     allergen_warnings: list[str] = Field(
         default_factory=list,
         description="Allergen names that triggered a user-profile match",
     )
     storage_warnings: list[StorageWarningSchema] = Field(default_factory=list)
+    product_extraction: ProductExtractionSchema | None = Field(
+        default=None,
+        description="Rich structured data extracted by Gemini Vision (brand, nutrition, diet flags)",
+    )
     barcode_data: str | None = None
     notes: list[str] = Field(default_factory=list)
 

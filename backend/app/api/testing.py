@@ -17,7 +17,7 @@ import logging
 import time as _t
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -191,6 +191,129 @@ async def clear_session(wa_id: str) -> dict:
     await delete_session(wa_id)
     logger.info("testing.session.cleared | wa_id=%r", wa_id)
     return {"cleared": True, "wa_id": wa_id}
+
+
+@router.post("/scan")
+async def testing_scan_upload(
+    image: UploadFile = File(...),
+    scan_type: str = Form("unified"),
+    user_id: str | None = Form(None),
+    wa_id: str | None = Form(None),
+    db: AsyncSession = Depends(get_async_session),
+) -> dict:
+    """
+    Testing proxy for Phase 3 scan pipelines.
+
+    Accepts a multipart image upload and routes to the appropriate pipeline
+    (unified / prescription / grocery). Returns the typed pipeline result as JSON.
+    """
+    import uuid as _uuid
+
+    from app.services.pipeline_service import (
+        run_grocery_scan,
+        run_prescription_scan,
+        run_unified_scan,
+    )
+
+    image_bytes = await image.read()
+    uid: _uuid.UUID | None = None
+    if user_id:
+        try:
+            uid = _uuid.UUID(user_id)
+        except ValueError:
+            pass
+
+    logger.info(
+        "testing.scan | scan_type=%r filename=%r bytes=%d user_id=%s",
+        scan_type, image.filename, len(image_bytes), uid,
+    )
+
+    # Tie the product context to the WhatsApp user ID so follow-up questions
+    # in the same chat panel automatically carry the scan context.
+    session_id = wa_id or f"testing:{uid or 'anon'}"
+
+    try:
+        if scan_type == "prescription":
+            result = await run_prescription_scan(db, image_bytes=image_bytes, user_id=uid)
+            await db.commit()
+            payload = {"scan_type": "prescription", "result": result.model_dump()}
+
+        elif scan_type == "grocery":
+            _event, result = await run_grocery_scan(db, image_bytes=image_bytes, user_id=uid)
+            await db.commit()
+            payload = {"scan_type": "grocery", "result": result.model_dump()}
+            # Store context for follow-up Q&A
+            from app.services.product_context import (
+                build_context_from_grocery_response,
+                store_product_context,
+            )
+            ctx = build_context_from_grocery_response(result, session_id)
+            await store_product_context(session_id, ctx)
+            payload["session_id"] = session_id
+
+        else:  # unified (default)
+            result = await run_unified_scan(db, image_bytes=image_bytes, user_id=uid, lang="en")
+            await db.commit()
+            payload = {"scan_type": "unified", "result": result.model_dump()}
+            # Store context based on which sub-pipeline ran
+            from app.services.product_context import (
+                build_context_from_grocery_response,
+                build_context_from_medicine_response,
+                store_product_context,
+            )
+            if result.grocery:
+                ctx = build_context_from_grocery_response(result.grocery, session_id)
+                await store_product_context(session_id, ctx)
+                payload["session_id"] = session_id
+            elif result.medicine:
+                ctx = build_context_from_medicine_response(result.medicine, session_id)
+                await store_product_context(session_id, ctx)
+                payload["session_id"] = session_id
+
+        logger.info("testing.scan | done scan_type=%r session_id=%r", scan_type, session_id)
+        return payload
+
+    except Exception as exc:
+        logger.exception("testing.scan | error scan_type=%r", scan_type)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+@router.post("/ask")
+async def testing_ask(
+    session_id: str = Form(...),
+    question: str = Form(...),
+    db: AsyncSession = Depends(get_async_session),   # noqa: ARG001 — kept for consistency
+) -> dict:
+    """
+    Ask a follow-up question about the last scanned product.
+
+    Retrieves the product context stored by /testing/scan and passes it to
+    the LangGraph product advisor agent. Returns the agent's answer + tools used.
+    """
+    logger.info("testing.ask | session_id=%r question=%r", session_id, question[:100])
+
+    from app.services.product_context import get_product_context
+    from app.agents.product_advisor.graph import run_product_advisor
+
+    product_context = await get_product_context(session_id)
+    if not product_context:
+        logger.warning("testing.ask | no context for session=%r", session_id)
+
+    result = await run_product_advisor(
+        question,
+        product_context=product_context,
+        session_id=session_id,
+    )
+    return {
+        "answer": result["answer"],
+        "tools_called": result["tools_called"],
+        "error": result.get("error"),
+        "context_found": product_context is not None,
+    }
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -396,9 +519,31 @@ header{background:#1e293b;border-bottom:1px solid #334155;padding:10px 20px;disp
     </div>
 
     <div class="chat-foot">
-      <div id="loadEl" class="loading"><div class="spin"></div>Agent thinking…</div>
+      <!-- Image attach preview — shown above input when a file is chosen -->
+      <div id="attachPreview" style="display:none;align-items:center;gap:8px;background:#0c1a2e;border:1px solid #0284c7;border-radius:7px;padding:6px 10px;margin-bottom:6px">
+        <img id="attachThumb" style="width:40px;height:40px;object-fit:cover;border-radius:4px;border:1px solid #334155">
+        <div style="flex:1;min-width:0">
+          <div id="attachName" style="font-size:11px;color:#7dd3fc;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
+          <select id="attachScanType" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;font-size:10px;padding:2px 4px;border-radius:4px;margin-top:2px">
+            <option value="unified">Auto-detect</option>
+            <option value="grocery">Grocery</option>
+            <option value="prescription">Prescription</option>
+          </select>
+        </div>
+        <button onclick="clearAttach()" style="background:none;border:none;color:#475569;font-size:16px;cursor:pointer;padding:0 4px" title="Remove">✕</button>
+      </div>
+      <!-- Product context indicator — shown after a scan is complete -->
+      <div id="ctxIndicator" style="display:none;align-items:center;gap:6px;font-size:11px;color:#64748b;margin-bottom:5px;padding:4px 8px;background:#0f172a;border-radius:5px;border:1px solid #1e293b">
+        <span id="ctxLabel" style="flex:1">📦 Product context active — follow-up questions go to the advisor</span>
+        <button onclick="clearProductCtx()" style="background:none;border:none;color:#475569;font-size:11px;cursor:pointer;padding:0" title="Clear scan context">✕ clear</button>
+      </div>
+      <div id="loadEl" class="loading"><div class="spin"></div><span id="loadText">Agent thinking…</span></div>
       <div class="inp-row">
-        <textarea id="msgInput" class="msg-ta" placeholder="Type a message… (Enter to send)"></textarea>
+        <button id="attachBtn" onclick="document.getElementById('chatFileInput').click()" title="Attach product image"
+          style="background:#1e293b;border:1px solid #334155;color:#64748b;width:36px;height:36px;border-radius:7px;font-size:16px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;align-self:flex-end;transition:color .15s"
+          onmouseover="this.style.color='#38bdf8'" onmouseout="this.style.color='#64748b'">📎</button>
+        <input id="chatFileInput" type="file" accept="image/*" style="display:none" onchange="chatFileChosen(this)">
+        <textarea id="msgInput" class="msg-ta" placeholder="Type a message… or attach an image to scan a product"></textarea>
         <button id="sendBtn" class="send-btn" onclick="sendMsg()">Send ↵</button>
       </div>
     </div>
@@ -441,51 +586,141 @@ function tab(name){
   document.getElementById('pane-'+name)?.classList.add('active');
 }
 
-// ── Send message ────────────────────────────────────────────────────────────
+// ── State ───────────────────────────────────────────────────────────────────
+let _sessionId = null;   // set after scan; routes text messages to advisor
+let _chatFile  = null;   // set when user picks a file via 📎
+
+// ── File attachment ─────────────────────────────────────────────────────────
+function chatFileChosen(inp){
+  const f = inp.files[0];
+  if(!f) return;
+  _chatFile = f;
+  document.getElementById('attachThumb').src = URL.createObjectURL(f);
+  document.getElementById('attachName').textContent = f.name + '  ·  ' + (f.size/1024).toFixed(1) + ' KB';
+  document.getElementById('attachPreview').style.display = 'flex';
+}
+
+function clearAttach(){
+  _chatFile = null;
+  document.getElementById('chatFileInput').value = '';
+  document.getElementById('attachPreview').style.display = 'none';
+}
+
+function clearProductCtx(){
+  _sessionId = null;
+  document.getElementById('ctxIndicator').style.display = 'none';
+}
+
+// ── Send (routes: scan ▸ advisor ▸ agent) ───────────────────────────────────
 async function sendMsg(){
-  const waId=document.getElementById('waId').value.trim();
-  const msg=document.getElementById('msgInput').value.trim();
-  if(!waId||!msg)return;
+  const waId = document.getElementById('waId').value.trim();
+  const msg   = document.getElementById('msgInput').value.trim();
+  if(!waId) return;
+  if(!_chatFile && !msg) return;
 
-  document.getElementById('sendBtn').disabled=true;
-  document.getElementById('loadEl').style.display='flex';
-  addBubble('user',msg);
-  document.getElementById('msgInput').value='';
+  document.getElementById('sendBtn').disabled = true;
+  document.getElementById('loadEl').style.display = 'flex';
+  document.getElementById('msgInput').value = '';
+  const t0 = Date.now();
 
-  const t0=Date.now();
   try{
-    const r=await fetch('/testing/send',{
+
+    // ── Route 1: file attached → product scan ──────────────────────────────
+    if(_chatFile){
+      const scanType = document.getElementById('attachScanType').value;
+      addBubble('user','📎 '+_chatFile.name+(msg?'\n'+msg:''));
+      document.getElementById('loadText').textContent = 'Scanning product…';
+
+      const fd = new FormData();
+      fd.append('image', _chatFile, _chatFile.name);
+      fd.append('scan_type', scanType);
+      fd.append('wa_id', waId);
+      clearAttach();
+
+      const r = await fetch('/testing/scan',{method:'POST',body:fd});
+      const d = await r.json();
+      const elapsed = Date.now()-t0;
+
+      if(d.error){
+        addBubble('bot','⚠️ Scan failed: '+d.error,null,true);
+      } else {
+        addScanBubble(d, elapsed+'ms');
+        if(d.session_id){
+          _sessionId = d.session_id;
+          const pe = d.result?.product_extraction
+                  || d.result?.grocery?.product_extraction
+                  || {};
+          const label = pe.brand_name || pe.product_name || '';
+          document.getElementById('ctxLabel').textContent =
+            label ? '📦 '+label+' — follow-ups go to the advisor'
+                  : '📦 Product context active — follow-ups go to the advisor';
+          document.getElementById('ctxIndicator').style.display = 'flex';
+        }
+      }
+      return;
+    }
+
+    // ── Route 2: product context active → advisor ──────────────────────────
+    if(_sessionId){
+      addBubble('user', msg);
+      document.getElementById('loadText').textContent = 'Advisor thinking…';
+
+      const fd = new FormData();
+      fd.append('session_id', _sessionId);
+      fd.append('question', msg);
+
+      const r = await fetch('/testing/ask',{method:'POST',body:fd});
+      const d = await r.json();
+      const elapsed = Date.now()-t0;
+
+      if(d.error && !d.answer){
+        addBubble('bot','⚠️ '+d.error,null,true);
+      } else {
+        addAdvisorBubble(d.answer||'(no answer)', d.tools_called||[], elapsed+'ms');
+      }
+      if(!d.context_found){
+        addBubble('bot','⚠️ Product context expired. Scan a product to start a new session.',null,true);
+        clearProductCtx();
+      }
+      return;
+    }
+
+    // ── Route 3: regular WhatsApp agent ───────────────────────────────────
+    addBubble('user', msg);
+    document.getElementById('loadText').textContent = 'Agent thinking…';
+
+    const r = await fetch('/testing/send',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({wa_id:waId,message:msg})
     });
-    const d=await r.json();
-    const elapsed=Date.now()-t0;
+    const d = await r.json();
+    const elapsed = Date.now()-t0;
 
     if(d.error){
       addBubble('bot','⚠️ '+d.error,null,true);
     } else {
       addBubble('bot',d.response||'(empty response)',elapsed+'ms');
     }
-
     renderTrace(d.trace||[]);
     renderState(d.final_state||{});
     renderSession(d.redis_session);
     renderMsgs(d.db_messages||[]);
     renderUser(d.db_user);
     tab('trace');
+
   }catch(e){
     addBubble('bot','⚠️ Request failed: '+e.message,null,true);
   }finally{
-    document.getElementById('sendBtn').disabled=false;
-    document.getElementById('loadEl').style.display='none';
+    document.getElementById('sendBtn').disabled = false;
+    document.getElementById('loadEl').style.display = 'none';
+    document.getElementById('loadText').textContent = 'Agent thinking…';
   }
 }
 
-// ── Bubbles ─────────────────────────────────────────────────────────────────
+// ── Plain chat bubble ────────────────────────────────────────────────────────
 function addBubble(side,text,timing,isErr){
   const c=document.getElementById('chatMsgs');
-  // Clear placeholder on first message
   if(c.querySelector('.empty'))c.innerHTML='';
 
   const row=document.createElement('div');
@@ -498,11 +733,91 @@ function addBubble(side,text,timing,isErr){
   const meta=document.createElement('div');
   meta.className='msg-meta';
   meta.textContent=new Date().toLocaleTimeString();
-  if(timing){
-    const t=document.createElement('span');
-    t.className='t-badge';
-    t.textContent=timing;
-    meta.appendChild(t);
+  if(timing){const t=document.createElement('span');t.className='t-badge';t.textContent=timing;meta.appendChild(t);}
+  wrap.appendChild(b);wrap.appendChild(meta);
+  row.appendChild(wrap);
+  c.appendChild(row);
+  c.scrollTop=c.scrollHeight;
+}
+
+// ── Compact scan result bubble ───────────────────────────────────────────────
+function addScanBubble(d, timing){
+  const c = document.getElementById('chatMsgs');
+  if(c.querySelector('.empty')) c.innerHTML='';
+
+  const r  = d.result || {};
+  const st = d.scan_type || 'unified';
+  const groc = r.grocery || (st==='grocery' ? r : null);
+  const med  = r.medicine || (st==='medicine' ? r : null);
+  const pres = st==='prescription';
+  const pe   = r.product_extraction || groc?.product_extraction || {};
+
+  const lines = [];
+
+  if(pres){
+    lines.push('📋 Prescription scanned');
+    const n = (r.medicine_cards||[]).length;
+    if(n) lines.push(`💊 ${n} medicine${n>1?'s':''} identified`);
+  } else if(groc){
+    const rb = groc.risk_band || 'unknown';
+    const rE = {low:'✅',medium:'⚠️',high:'❌'}[rb]||'❓';
+    const brand = pe.brand_name || pe.product_name || groc.product_extraction?.brand_name || '';
+    lines.push(brand ? `📦 ${brand}` : '📦 Grocery product scanned');
+    lines.push(`${rE} Risk: ${rb.toUpperCase()}`+(groc.expiry_status?` · Expiry: ${groc.expiry_status}`:''));
+    const ingN = groc.ingredients_count || pe.ingredients?.length || null;
+    if(ingN) lines.push(`🧪 ${ingN} ingredients`);
+    (groc.findings||[]).filter(f=>f.severity==='error'||f.severity==='warning').slice(0,2)
+      .forEach(f=>lines.push(`• ${f.message}`));
+    if(groc.fssai?.online_status==='valid') lines.push('✅ FSSAI verified');
+    else if(groc.fssai?.online_status==='invalid') lines.push('❌ FSSAI issue found');
+  } else if(med){
+    lines.push(med.brand_name ? `💊 ${med.brand_name}` : '💊 Medicine scanned');
+    if(med.verdict) lines.push(`Verdict: ${med.verdict}`);
+    if(med.expiry_status) lines.push(`Expiry: ${med.expiry_status}`);
+  } else {
+    lines.push('📷 Scan complete');
+  }
+
+  if(d.session_id && !pres){
+    lines.push('');
+    lines.push('💬 Ask me anything about this product!');
+  }
+
+  const row=document.createElement('div');
+  row.className='msg-row';
+  const wrap=document.createElement('div');
+  wrap.className='msg-wrap';
+  const b=document.createElement('div');
+  b.className='bubble bot';
+  b.textContent=lines.join('\n');
+  const meta=document.createElement('div');
+  meta.className='msg-meta';
+  meta.textContent=new Date().toLocaleTimeString();
+  if(timing){const t=document.createElement('span');t.className='t-badge';t.textContent=timing;meta.appendChild(t);}
+  wrap.appendChild(b);wrap.appendChild(meta);
+  row.appendChild(wrap);
+  c.appendChild(row);
+  c.scrollTop=c.scrollHeight;
+}
+
+// ── Advisor reply bubble (renders **bold** + tool badges) ────────────────────
+function addAdvisorBubble(text, tools, timing){
+  const c=document.getElementById('chatMsgs');
+  const row=document.createElement('div');
+  row.className='msg-row';
+  const wrap=document.createElement('div');
+  wrap.className='msg-wrap';
+  const b=document.createElement('div');
+  b.className='bubble bot';
+  b.innerHTML=esc(text).replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+  const meta=document.createElement('div');
+  meta.className='msg-meta';
+  meta.textContent=new Date().toLocaleTimeString();
+  if(timing){const t=document.createElement('span');t.className='t-badge';t.textContent=timing;meta.appendChild(t);}
+  if(tools&&tools.length){
+    const ts=document.createElement('span');
+    ts.innerHTML=tools.map(n=>`<span class="t-badge">${esc(n)}</span>`).join('');
+    meta.appendChild(ts);
   }
   wrap.appendChild(b);wrap.appendChild(meta);
   row.appendChild(wrap);
@@ -516,10 +831,7 @@ const NODE_COLORS={router:'nb-router',onboarding:'nb-onboarding',existing_user_g
 
 function renderTrace(trace){
   const el=document.getElementById('pane-trace');
-  if(!trace.length){
-    el.innerHTML='<div class="empty">No node trace captured.</div>';
-    return;
-  }
+  if(!trace.length){el.innerHTML='<div class="empty">No node trace captured.</div>';return;}
   el.innerHTML=trace.map((s,i)=>{
     const cls=NODE_COLORS[s.node]||'nb-default';
     const lbl=NODE_LABELS[s.node]||s.node;
@@ -590,10 +902,7 @@ async function clearSess(){
 // ── Messages panel ───────────────────────────────────────────────────────────
 function renderMsgs(msgs){
   const el=document.getElementById('msgsContent');
-  if(!msgs.length){
-    el.innerHTML='<div class="empty">No messages in DB for this wa_id.</div>';
-    return;
-  }
+  if(!msgs.length){el.innerHTML='<div class="empty">No messages in DB for this wa_id.</div>';return;}
   el.innerHTML=`<table class="mt">
     <thead><tr><th>Dir</th><th>Time</th><th>Message</th></tr></thead>
     <tbody>${msgs.map(m=>`<tr>
