@@ -1,27 +1,86 @@
-# Pinned at major versions; tighten to exact versions once we have a lockfile.
-# Keep this list small — every dep is a security and maintenance cost.
+# TrustLens backend dependencies — pinned at major versions.
+# Tighten to exact versions once we have a lock file (pip-compile / uv lock).
+# Keep this list grouped by concern; every dep is a security + maintenance cost.
 
+# -----------------------------------------------------------------------
+# Web framework
+# -----------------------------------------------------------------------
 fastapi>=0.115,<1.0
 uvicorn[standard]>=0.30,<1.0
+python-multipart>=0.0.9            # FastAPI file upload support
+
+# -----------------------------------------------------------------------
+# Data validation
+# -----------------------------------------------------------------------
 pydantic>=2.7,<3.0
 pydantic-settings>=2.3,<3.0
-python-multipart>=0.0.9            # FastAPI needs this for file uploads
-httpx>=0.27,<1.0                   # async HTTP client (webhook media downloads, outbound calls)
-twilio>=9.0,<10.0                  # Twilio WhatsApp Sandbox / Business API
+email-validator>=2.1               # pydantic EmailStr support
 
-# Image / barcode / OCR / scraping deps. The actual logic lives in services/,
-# but we list everything here so `pip install -r` boots a runnable dev env.
+# -----------------------------------------------------------------------
+# Database — async PostgreSQL + pgvector
+# -----------------------------------------------------------------------
+sqlalchemy>=2.0,<3.0
+asyncpg>=0.29                      # async PostgreSQL driver (used at runtime)
+psycopg2-binary>=2.9               # sync driver used by Alembic migrations only
+alembic>=1.13                      # schema migrations
+pgvector>=0.3                      # SQLAlchemy Vector type for semantic search
+
+# -----------------------------------------------------------------------
+# HTTP client
+# -----------------------------------------------------------------------
+httpx>=0.27,<1.0
+
+# -----------------------------------------------------------------------
+# WhatsApp
+# -----------------------------------------------------------------------
+twilio>=9.0,<10.0
+
+# -----------------------------------------------------------------------
+# Session / in-memory agent state
+# -----------------------------------------------------------------------
+redis>=5.0                         # async Redis client (aioredis merged into redis-py)
+
+# -----------------------------------------------------------------------
+# AI / Agent orchestration
+# -----------------------------------------------------------------------
+langchain>=0.3                     # LangChain core (tools, prompts)
+langchain-anthropic>=0.3           # Claude 3.x / 4.x provider
+langgraph>=0.2                     # Multi-step agent graph (state machine)
+langchain-community>=0.3           # Community tools (Tavily wrapper)
+tavily-python>=0.5                 # Tavily web search API
+
+# -----------------------------------------------------------------------
+# Embeddings (for pgvector semantic search)
+# -----------------------------------------------------------------------
+openai>=1.30                       # text-embedding-3-small; also works with Azure / local proxy
+
+# -----------------------------------------------------------------------
+# Image / barcode / OCR / scraping
+# -----------------------------------------------------------------------
 pillow>=10.3
-opencv-contrib-python>=4.10        # primary QR decoder (WeChat detector — robust on warped/foil QRs)
-pyzbar>=0.1.9                      # fallback decoder for non-QR symbologies (EAN13, Code128, ...). Needs libzbar0 / `brew install zbar`
-pytesseract>=0.3.10                # requires the `tesseract` system binary
-google-genai>=0.3                  # Google ADK Vision fallback (Gemini)
-playwright>=1.45                   # also needs `playwright install chromium`
-rapidfuzz>=3.6                     # fast fuzzy string matching for the matcher
+opencv-contrib-python>=4.10        # WeChat QR detector (robust on warped barcodes)
+pyzbar>=0.1.9                      # EAN-13, Code128 fallback (needs libzbar0 / brew install zbar)
+pytesseract>=0.3.10                # OCR fallback (needs tesseract system binary)
+google-genai>=0.3                  # Gemini Vision primary OCR
+playwright>=1.45                   # headless Chromium (run `playwright install chromium` once)
+rapidfuzz>=3.6                     # fuzzy string matching for the matcher engine
 
+# -----------------------------------------------------------------------
+# Internationalisation
+# -----------------------------------------------------------------------
+# No external i18n library — JSON catalogues + custom wrapper (app/core/i18n.py)
+
+# -----------------------------------------------------------------------
+# Utilities
+# -----------------------------------------------------------------------
+python-dateutil>=2.9               # robust date parsing for label OCR output
+structlog>=24.0                    # structured logging (optional but recommended)
+
+# -----------------------------------------------------------------------
 # Dev / test
+# -----------------------------------------------------------------------
 pytest>=8.0
 pytest-asyncio>=0.23
-httpx>=0.27                        # already required by FastAPI TestClient
-qrcode[pil]>=7.4                   # tests generate QRs to round-trip through the decoder
-ruff>=0.5
+httpx>=0.27                        # also the async test client for FastAPI
+qrcode[pil]>=7.4                   # generate test QRs for round-trip decode tests
+ruff>=0.5                          # linting + formatting

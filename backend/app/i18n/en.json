@@ -1,0 +1,39 @@
+{
+  "scan.verdict.verified.title": "✅ Verified",
+  "scan.verdict.verified.message": "This product has been verified as authentic. Batch: {batch_no}, Expires: {expiry_date}.",
+  "scan.verdict.suspicious.title": "⚠️ Suspicious",
+  "scan.verdict.suspicious.message": "This product could not be fully verified. Please cross-check with your pharmacist before use.",
+  "scan.verdict.expired.title": "❌ Expired",
+  "scan.verdict.expired.message": "This batch expired on {expiry_date}. Do not use this product.",
+  "scan.verdict.unknown.title": "❓ Unknown",
+  "scan.verdict.unknown.message": "We could not retrieve enough data to verify this product. Please consult your pharmacist.",
+
+  "allergen.warning.title": "⚠️ Allergen Alert",
+  "allergen.warning.message": "This product contains {allergens}, which you have listed as an allergy.",
+
+  "expiry.safe.message": "Expiry: {expiry_date} — {days_remaining} days remaining.",
+  "expiry.warning.message": "⚠️ Expiring soon: {expiry_date} ({days_remaining} days left).",
+  "expiry.danger.message": "❌ This product expired on {expiry_date}.",
+
+  "interaction.found.title": "⚠️ Drug Interaction Detected",
+  "interaction.found.message": "Taking {drug_a} together with {drug_b} may cause {severity} interactions. Please consult your doctor.",
+  "interaction.contraindicated.message": "Do NOT take {drug_a} with {drug_b}. This combination is contraindicated.",
+
+  "whatsapp.welcome": "Welcome to TrustLens! Send a photo of any medicine or grocery product barcode to verify it.",
+  "whatsapp.send_image_prompt": "Please send a clear photo of the barcode or QR code on the product.",
+  "whatsapp.processing": "Scanning your product... ⏳",
+  "whatsapp.error.generic": "Sorry, something went wrong. Please try again or type HELP.",
+  "whatsapp.help": "Commands:\n• Send a photo: scan barcode\n• Type a barcode number: look up directly\n• HELP: show this menu",
+
+  "error.product_not_found": "Product not found in our database.",
+  "error.barcode_unreadable": "Could not read the barcode. Please try a clearer photo with good lighting.",
+  "error.service_unavailable": "Our verification service is temporarily unavailable. Please try again in a few minutes.",
+
+  "fssai.valid": "FSSAI licence {license_no} is valid.",
+  "fssai.invalid": "⚠️ FSSAI licence {license_no} could not be verified.",
+  "fssai.missing": "⚠️ No FSSAI licence number found on this product.",
+
+  "nutrition.high_sugar": "⚠️ High sugar content: {amount}g per serving.",
+  "nutrition.high_sodium": "⚠️ High sodium content: {amount}mg per serving.",
+  "nutrition.high_fat": "⚠️ High saturated fat: {amount}g per serving."
+}

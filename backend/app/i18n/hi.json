@@ -1,0 +1,39 @@
+{
+  "scan.verdict.verified.title": "✅ सत्यापित",
+  "scan.verdict.verified.message": "यह उत्पाद प्रामाणिक है। बैच: {batch_no}, समाप्ति: {expiry_date}।",
+  "scan.verdict.suspicious.title": "⚠️ संदिग्ध",
+  "scan.verdict.suspicious.message": "इस उत्पाद की पूरी तरह पुष्टि नहीं हो सकी। उपयोग से पहले अपने फार्मासिस्ट से जाँच करें।",
+  "scan.verdict.expired.title": "❌ समाप्त",
+  "scan.verdict.expired.message": "यह बैच {expiry_date} को समाप्त हो गया था। इस उत्पाद का उपयोग न करें।",
+  "scan.verdict.unknown.title": "❓ अज्ञात",
+  "scan.verdict.unknown.message": "इस उत्पाद को सत्यापित करने के लिए पर्याप्त डेटा उपलब्ध नहीं है। अपने फार्मासिस्ट से परामर्श लें।",
+
+  "allergen.warning.title": "⚠️ एलर्जेन चेतावनी",
+  "allergen.warning.message": "इस उत्पाद में {allergens} है, जो आपकी एलर्जी सूची में है।",
+
+  "expiry.safe.message": "समाप्ति: {expiry_date} — {days_remaining} दिन शेष।",
+  "expiry.warning.message": "⚠️ जल्द समाप्त: {expiry_date} ({days_remaining} दिन शेष)।",
+  "expiry.danger.message": "❌ यह उत्पाद {expiry_date} को समाप्त हो गया।",
+
+  "interaction.found.title": "⚠️ दवा प्रतिक्रिया",
+  "interaction.found.message": "{drug_a} और {drug_b} एक साथ लेने से {severity} प्रतिक्रिया हो सकती है। कृपया अपने डॉक्टर से परामर्श लें।",
+  "interaction.contraindicated.message": "{drug_a} और {drug_b} एक साथ बिल्कुल न लें। यह संयोजन वर्जित है।",
+
+  "whatsapp.welcome": "TrustLens में आपका स्वागत है! किसी भी दवा या किराने के उत्पाद के बारकोड की फ़ोटो भेजें।",
+  "whatsapp.send_image_prompt": "उत्पाद पर बारकोड या QR कोड की स्पष्ट फ़ोटो भेजें।",
+  "whatsapp.processing": "आपका उत्पाद स्कैन हो रहा है... ⏳",
+  "whatsapp.error.generic": "कुछ गड़बड़ हो गई। कृपया दोबारा प्रयास करें।",
+  "whatsapp.help": "आदेश:\n• फ़ोटो भेजें: बारकोड स्कैन करें\n• बारकोड नंबर टाइप करें\n• HELP: यह मेनू दिखाएं",
+
+  "error.product_not_found": "उत्पाद हमारे डेटाबेस में नहीं मिला।",
+  "error.barcode_unreadable": "बारकोड नहीं पढ़ा जा सका। अच्छी रोशनी में स्पष्ट फ़ोटो लें।",
+  "error.service_unavailable": "सत्यापन सेवा अस्थायी रूप से उपलब्ध नहीं है। कृपया कुछ मिनट बाद प्रयास करें।",
+
+  "fssai.valid": "FSSAI लाइसेंस {license_no} वैध है।",
+  "fssai.invalid": "⚠️ FSSAI लाइसेंस {license_no} सत्यापित नहीं हो सका।",
+  "fssai.missing": "⚠️ इस उत्पाद पर FSSAI लाइसेंस नंबर नहीं मिला।",
+
+  "nutrition.high_sugar": "⚠️ उच्च चीनी सामग्री: प्रति सर्विंग {amount}g।",
+  "nutrition.high_sodium": "⚠️ उच्च सोडियम: प्रति सर्विंग {amount}mg।",
+  "nutrition.high_fat": "⚠️ उच्च संतृप्त वसा: प्रति सर्विंग {amount}g।"
+}

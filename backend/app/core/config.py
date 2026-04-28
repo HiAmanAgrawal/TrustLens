@@ -1,9 +1,13 @@
-"""Typed application settings.
+"""
+Typed application settings — single source of truth for all configuration.
 
-Loaded from environment variables (and ``.env`` for local dev) via
-pydantic-settings. ``get_settings`` is cached so the parsing cost is paid once.
-Never read ``os.environ`` directly elsewhere — go through this module so all
-config is discoverable in one place.
+All environment variables flow through this module. Never read ``os.environ``
+directly elsewhere; doing so creates invisible coupling and makes config
+untestable. Call ``get_settings()`` and access a typed field instead.
+
+``@lru_cache`` means the env file is parsed exactly once per process. Tests
+that need different values should use ``get_settings.cache_clear()`` +
+dependency override, not monkeypatching os.environ mid-flight.
 """
 
 from __future__ import annotations
@@ -14,44 +18,150 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """All env-driven config in one typed object.
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
-    Add new fields here as features land. Keep them grouped by concern and
-    documented inline so ``.env.example`` and this class never drift apart.
-    """
-
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
-
-    # --- App ---
+    # -----------------------------------------------------------------------
+    # App
+    # -----------------------------------------------------------------------
     app_env: str = "development"
+    app_name: str = "TrustLens"
+    app_version: str = "0.2.0"
     log_level: str = "INFO"
 
-    # --- HTTP ---
+    # -----------------------------------------------------------------------
+    # HTTP server
+    # -----------------------------------------------------------------------
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 
-    # --- WhatsApp (Twilio) ---
+    # -----------------------------------------------------------------------
+    # Database (Supabase / PostgreSQL + pgvector)
+    # -----------------------------------------------------------------------
+    # Full async DSN, e.g. postgresql+asyncpg://user:pass@host:5432/dbname
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/trustlens"
+    # Used by Alembic (sync driver) — swap asyncpg → psycopg2 automatically.
+    # Alembic's env.py derives this from database_url; leave empty to let it do so.
+    database_url_sync: str | None = None
+
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+    db_pool_timeout: int = 30        # seconds
+
+    # -----------------------------------------------------------------------
+    # Redis (session / in-memory agent state)
+    # -----------------------------------------------------------------------
+    redis_url: str = "redis://localhost:6379/0"
+    session_ttl_seconds: int = 3600  # 1 hour per WhatsApp session
+
+    # -----------------------------------------------------------------------
+    # WhatsApp — Twilio
+    # -----------------------------------------------------------------------
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
-    twilio_whatsapp_from: str | None = None
+    twilio_whatsapp_from: str | None = None   # e.g. whatsapp:+14155238886
 
+    # -----------------------------------------------------------------------
+    # WhatsApp — Meta Cloud API
+    # -----------------------------------------------------------------------
     meta_waba_phone_id: str | None = None
     meta_waba_token: str | None = None
     meta_waba_verify_token: str | None = None
 
+    # -----------------------------------------------------------------------
+    # WhatsApp — Unipile
+    # -----------------------------------------------------------------------
     unipile_api_key: str | None = None
     unipile_dsn: str | None = None
 
-    # --- Scraper / AI ---
-    capsolver_api_key: str | None = None
-    # Google ADK / Gemini drives the PRIMARY OCR pass for both medicines
-    # and grocery items. Tesseract is the local fallback that runs when
-    # this key is missing or when Gemini fails (auth, rate limit, network).
+    # -----------------------------------------------------------------------
+    # AI / ML
+    # -----------------------------------------------------------------------
+    # Google Gemini — primary OCR pass for medicine labels and grocery packs.
+    # Tesseract is the local fallback if this key is absent or Gemini fails.
     google_api_key: str | None = None
     google_vision_model: str = "gemini-2.5-flash"
+
+    # OpenAI-compatible embedding endpoint (can be pointed at Supabase's
+    # pgvector-compatible embedder or any local model).
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimension: int = 1536
+    openai_api_key: str | None = None
+
+    # -----------------------------------------------------------------------
+    # LangChain / LangGraph
+    # -----------------------------------------------------------------------
+    langchain_tracing_v2: bool = False
+    langchain_api_key: str | None = None
+    langchain_project: str = "trustlens"
+
+    # -----------------------------------------------------------------------
+    # Tavily (web search)
+    # -----------------------------------------------------------------------
+    tavily_api_key: str | None = None
+    tavily_max_results: int = 5
+
+    # -----------------------------------------------------------------------
+    # Scraper
+    # -----------------------------------------------------------------------
+    capsolver_api_key: str | None = None
+    scraper_timeout_s: float = 30.0
+
+    # -----------------------------------------------------------------------
+    # i18n — static catalogues
+    # -----------------------------------------------------------------------
+    default_language: str = "en"
+    supported_languages: list[str] = ["en", "hi", "ta", "mr"]
+
+    # -----------------------------------------------------------------------
+    # i18n — AI-powered translation
+    #
+    # When USE_AI_I18N=true, conversational strings (WhatsApp replies,
+    # summaries, help text) are translated on-the-fly by an AI model.
+    # Safety-critical strings (verdicts, allergen/interaction warnings)
+    # ALWAYS use the static JSON catalogue regardless of this flag.
+    #
+    # Supported providers:
+    #   "gemini"   — Google Gemini via google-genai SDK (uses GOOGLE_API_KEY)
+    #   "lmstudio" — any local OpenAI-compatible server (LM Studio, Ollama,
+    #                llama.cpp) pointed at OPENAI_BASE_URL
+    #   "openai"   — OpenAI cloud API
+    # -----------------------------------------------------------------------
+    use_ai_i18n: bool = False
+    i18n_ai_provider: str = "gemini"      # gemini | lmstudio | openai
+    i18n_ai_model: str = "gemini-2.0-flash-lite"   # cheap/fast for translation
+    # Base URL for OpenAI-compatible endpoints.
+    # LM Studio default: http://localhost:1234/v1
+    # Ollama default:    http://localhost:11434/v1
+    openai_base_url: str = "https://api.openai.com/v1"
+    # In-process LRU cache size for AI translations (key+lang → translated string).
+    # Prevents redundant API calls for identical WhatsApp reply templates.
+    i18n_cache_size: int = 512
+
+    # -----------------------------------------------------------------------
+    # Feature flags  (simple booleans; no external flag service needed yet)
+    # -----------------------------------------------------------------------
+    enable_llm_summaries: bool = False   # Gate LLM-generated verdict summaries
+    enable_web_search: bool = True       # Tavily for unknown products
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env == "production"
+
+    @property
+    def sync_database_url(self) -> str:
+        """Alembic uses a sync driver; swap asyncpg → psycopg2."""
+        if self.database_url_sync:
+            return self.database_url_sync
+        return self.database_url.replace(
+            "postgresql+asyncpg://", "postgresql+psycopg2://"
+        )
 
 
 @lru_cache
 def get_settings() -> Settings:
-    """Cached accessor — first call parses env, every subsequent call is free."""
+    """Cached accessor — first call parses the env file, every subsequent call is free."""
     return Settings()

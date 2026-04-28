@@ -1,0 +1,39 @@
+{
+  "scan.verdict.verified.title": "✅ சரிபார்க்கப்பட்டது",
+  "scan.verdict.verified.message": "இந்த தயாரிப்பு உண்மையானது. தொகுதி: {batch_no}, காலாவதி: {expiry_date}.",
+  "scan.verdict.suspicious.title": "⚠️ சந்தேகமான",
+  "scan.verdict.suspicious.message": "இந்த தயாரிப்பை முழுமையாக சரிபார்க்க முடியவில்லை. உங்கள் மருந்தாளரிடம் சரிபார்க்கவும்.",
+  "scan.verdict.expired.title": "❌ காலாவதியானது",
+  "scan.verdict.expired.message": "இந்த தொகுதி {expiry_date} அன்று காலாவதியானது. இந்த தயாரிப்பை பயன்படுத்த வேண்டாம்.",
+  "scan.verdict.unknown.title": "❓ தெரியாத",
+  "scan.verdict.unknown.message": "இந்த தயாரிப்பை சரிபார்க்க போதுமான தரவு இல்லை. உங்கள் மருந்தாளரை அணுகவும்.",
+
+  "allergen.warning.title": "⚠️ அலர்ஜி எச்சரிக்கை",
+  "allergen.warning.message": "இந்த தயாரிப்பில் {allergens} உள்ளது, இது உங்கள் அலர்ஜி பட்டியலில் உள்ளது.",
+
+  "expiry.safe.message": "காலாவதி: {expiry_date} — {days_remaining} நாட்கள் மீதமுள்ளன.",
+  "expiry.warning.message": "⚠️ விரைவில் காலாவதி: {expiry_date} ({days_remaining} நாட்கள் மட்டுமே).",
+  "expiry.danger.message": "❌ இந்த தயாரிப்பு {expiry_date} அன்று காலாவதியானது.",
+
+  "interaction.found.title": "⚠️ மருந்து தொடர்பு",
+  "interaction.found.message": "{drug_a} மற்றும் {drug_b} ஒன்றாக உட்கொள்வது {severity} விளைவுகளை ஏற்படுத்தலாம். உங்கள் மருத்துவரிடம் ஆலோசிக்கவும்.",
+  "interaction.contraindicated.message": "{drug_a} மற்றும் {drug_b} ஒன்றாக எடுக்க வேண்டாம். இது தடைசெய்யப்பட்டது.",
+
+  "whatsapp.welcome": "TrustLens-க்கு வருக! எந்த மருந்து அல்லது மளிகை பொருளின் பார்கோட் புகைப்படத்தை அனுப்பி சரிபார்க்கவும்.",
+  "whatsapp.send_image_prompt": "தயாரிப்பில் உள்ள பார்கோட் அல்லது QR குறியீட்டின் தெளிவான புகைப்படத்தை அனுப்பவும்.",
+  "whatsapp.processing": "உங்கள் தயாரிப்பை ஸ்கேன் செய்கிறோம்... ⏳",
+  "whatsapp.error.generic": "ஏதோ தவறு நடந்தது. மீண்டும் முயற்சிக்கவும்.",
+  "whatsapp.help": "கட்டளைகள்:\n• புகைப்படம் அனுப்பு: பார்கோட் ஸ்கேன்\n• பார்கோட் எண் தட்டச்சு செய்யவும்\n• HELP: இந்த மெனுவை காட்டு",
+
+  "error.product_not_found": "தயாரிப்பு எங்கள் தரவுத்தளத்தில் இல்லை.",
+  "error.barcode_unreadable": "பார்கோட் படிக்க முடியவில்லை. நல்ல வெளிச்சத்தில் தெளிவான புகைப்படம் எடுக்கவும்.",
+  "error.service_unavailable": "சரிபார்ப்பு சேவை தற்காலிகமாக கிடைக்கவில்லை. சில நிமிடங்களில் மீண்டும் முயற்சிக்கவும்.",
+
+  "fssai.valid": "FSSAI உரிமம் {license_no} செல்லுபடியாகும்.",
+  "fssai.invalid": "⚠️ FSSAI உரிமம் {license_no} சரிபார்க்க முடியவில்லை.",
+  "fssai.missing": "⚠️ இந்த தயாரிப்பில் FSSAI உரிம எண் இல்லை.",
+
+  "nutrition.high_sugar": "⚠️ அதிக சர்க்கரை: ஒரு பரிமாறலுக்கு {amount}g.",
+  "nutrition.high_sodium": "⚠️ அதிக சோடியம்: ஒரு பரிமாறலுக்கு {amount}mg.",
+  "nutrition.high_fat": "⚠️ அதிக நிறைவுற்ற கொழுப்பு: ஒரு பரிமாறலுக்கு {amount}g."
+}
