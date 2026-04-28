@@ -8,6 +8,7 @@ from datetime import date, datetime
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.models.enums import AllergenCategoryEnum, GenderEnum
+from app.schemas.health_profile import UserHealthProfileRead
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +108,6 @@ class UserRead(BaseModel):
 
 class UserReadWithProfile(UserRead):
     """Extended read schema that includes nested health profile and allergies."""
-    from app.schemas.health_profile import UserHealthProfileRead  # noqa: F401 — local import avoids circular
-
+    health_profile: UserHealthProfileRead | None = None
     allergies: list[UserAllergyRead] = []
     medical_conditions: list[UserMedicalConditionRead] = []

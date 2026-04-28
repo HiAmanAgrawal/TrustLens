@@ -2,8 +2,14 @@
 
 Twilio sends inbound WhatsApp messages as POST form-data. This route parses
 them, decides the intent (image verification, code verification, follow-up
-question, or general text), runs the appropriate pipeline, and replies via the
-Twilio REST API.
+question, onboarding, or greeting), runs the appropriate pipeline, and replies
+via the Twilio REST API.
+
+MESSAGE ROUTING (in priority order):
+  1. Image         → verify_image pipeline
+  2. URL / barcode → verify_code pipeline
+  3. Text, active scan session exists → follow-up Q&A (Gemini)
+  4. Text, no scan session → LangGraph agent (onboarding / personalised greeting)
 
 No echo detection needed — Twilio only fires webhooks for inbound messages.
 """
@@ -13,11 +19,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import uuid
 
 from fastapi import APIRouter, Request
 from fastapi.responses import PlainTextResponse
 
 from app.core.config import get_settings
+from app.models.enums import MessageDirectionEnum
 from app.services.pipeline import verify_code, verify_image
 from services.whatsapp import session as session_store
 from services.whatsapp.adapters import twilio_wa as twilio_adapter
@@ -216,12 +224,19 @@ async def _handle_text(
     text: str,
     parsed: twilio_adapter.ParsedWebhook,
 ) -> str:
-    """Handle plain text — either a follow-up question or a welcome prompt."""
+    """
+    Handle plain-text messages.
+
+    Priority:
+      1. Active scan session exists → follow-up Q&A via Gemini.
+      2. No scan session → LangGraph agent (onboarding or personalised greeting).
+      3. Agent failure fallback → static welcome message.
+    """
     settings = get_settings()
     sess = session_store.get(parsed.sender_phone)
 
     if sess is not None and sess.verdict is not None:
-        # User has an active session — treat as a follow-up question.
+        # User has an active scan session — treat as a follow-up question.
         logger.info("[%s] FOLLOW-UP: session found, verdict=%s, question=%s",
                     parsed.sender_phone, sess.verdict.get("verdict"), text[:80])
         google_key = settings.google_api_key
@@ -241,6 +256,88 @@ async def _handle_text(
         logger.info("[%s] Gemini answered (%d chars)", parsed.sender_phone, len(answer))
         return format_follow_up(answer)
 
-    # No active session — show welcome message.
-    logger.info("[%s] No session found, sending welcome message", parsed.sender_phone)
+    # No active scan session — delegate to the conversational agent.
+    logger.info("[%s] No scan session; routing to agent (onboarding / greeting)", parsed.sender_phone)
+    try:
+        reply = await _run_agent(
+            wa_id=parsed.sender_phone,
+            phone_number=parsed.sender_phone.replace("whatsapp:", ""),
+            text=text,
+        )
+        if reply:
+            return reply
+    except Exception:
+        logger.exception("[%s] Agent failed — falling back to welcome message", parsed.sender_phone)
+
     return format_welcome()
+
+
+# ---------------------------------------------------------------------------
+# LangGraph agent runner
+# ---------------------------------------------------------------------------
+
+async def _run_agent(*, wa_id: str, phone_number: str, text: str | None) -> str:
+    """
+    Invoke the conversational agent for a single inbound text message.
+
+    Manages its own DB session so the agent graph nodes can access the DB
+    without being tied to the FastAPI request lifecycle (this runs in a
+    background task).
+
+    Saves both the inbound message and the agent reply to conversation_messages
+    so the greeting node has accurate windowed context on the next turn.
+    """
+    from app.agents import conversation_graph
+    from app.core.database import get_session_factory
+    from app.services.message_service import save_message
+
+    factory = get_session_factory()
+    async with factory() as session:
+        try:
+            # Persist the inbound message before running the graph so the
+            # greeting node's windowed context includes the current message.
+            await save_message(
+                session,
+                whatsapp_user_id=wa_id,
+                direction=MessageDirectionEnum.INBOUND,
+                message_text=text,
+            )
+
+            initial_state = {
+                "whatsapp_user_id": wa_id,
+                "phone_number": phone_number,
+                "incoming_text": text,
+                "incoming_media_url": None,
+                "incoming_media_type": None,
+                "lang": "en",          # default; script detection can be added later
+                "is_new_user": False,  # router_node overwrites this
+                "onboarding_step": None,
+                "db_user_id": None,
+                "db_user_name": None,
+                "db_user_diet": None,
+                "session_data": None,
+                "response_text": "",
+                "response_sent": False,
+            }
+            config = {"configurable": {"db_session": session}}
+
+            logger.info("agent.invoke.start | wa_id=%r text=%r", wa_id, (text or "")[:60])
+            result = await conversation_graph.ainvoke(initial_state, config=config)
+            reply: str = result.get("response_text") or ""
+            logger.info("agent.invoke.done | wa_id=%r reply_chars=%d", wa_id, len(reply))
+
+            # Persist the outbound reply for future context windows.
+            if reply:
+                await save_message(
+                    session,
+                    whatsapp_user_id=wa_id,
+                    direction=MessageDirectionEnum.OUTBOUND,
+                    message_text=reply,
+                )
+
+            await session.commit()
+            return reply
+
+        except Exception:
+            await session.rollback()
+            raise

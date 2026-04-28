@@ -105,6 +105,9 @@ async def _lifespan(app: FastAPI):
     from app.core.database import close_engine
     await close_engine()
 
+    from app.services.session_service import close_redis
+    await close_redis()
+
     logger.info("app.shutdown.complete")
 
 
@@ -188,6 +191,16 @@ def create_app() -> FastAPI:
 
     # New versioned API
     app.include_router(v1_router)
+
+    # Developer testing portal — disabled in production
+    if settings.app_env != "production":
+        from app.api import testing as testing_module
+        app.include_router(
+            testing_module.router,
+            prefix="/testing",
+            tags=["testing-portal"],
+        )
+        logger.info("app.testing_portal.mounted | env=%s", settings.app_env)
 
     logger.info("app.routes_mounted")
     return app

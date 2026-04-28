@@ -158,3 +158,32 @@ class BloodGroupEnum(str, enum.Enum):
     O_POSITIVE = "O+"
     O_NEGATIVE = "O-"
     UNKNOWN = "unknown"
+
+
+class MessageDirectionEnum(str, enum.Enum):
+    INBOUND = "inbound"   # message from the user
+    OUTBOUND = "outbound" # message from TrustLens
+
+
+class MessageTypeEnum(str, enum.Enum):
+    TEXT = "text"
+    IMAGE = "image"
+    AUDIO = "audio"
+    DOCUMENT = "document"
+    STICKER = "sticker"
+
+
+class OnboardingStepEnum(str, enum.Enum):
+    """
+    State machine steps for the WhatsApp onboarding flow.
+
+    AWAITING_* states mean we sent a question and are waiting for the user's answer.
+    COMPLETE means all info collected and the user row has been persisted to DB.
+    ACTIVE is set for fully-onboarded users in normal conversation mode.
+    """
+    AWAITING_NAME = "awaiting_name"
+    AWAITING_DIET = "awaiting_diet"
+    AWAITING_ALLERGIES = "awaiting_allergies"
+    AWAITING_MEDICINES = "awaiting_medicines"
+    COMPLETE = "complete"
+    ACTIVE = "active"

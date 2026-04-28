@@ -18,6 +18,9 @@ from app.models.enums import (  # noqa: F401
     GenderEnum,
     IntakeFrequencyEnum,
     InteractionSeverityEnum,
+    MessageDirectionEnum,
+    MessageTypeEnum,
+    OnboardingStepEnum,
     ProductTypeEnum,
     ReactionSeverityEnum,
 )
@@ -40,6 +43,7 @@ from app.models.grocery import GroceryIngredient, GroceryItem  # noqa: F401
 from app.models.certification import ProductCertification  # noqa: F401
 from app.models.prescription import Prescription, PrescriptionItem  # noqa: F401
 from app.models.scan_event import MedicineScanEvent  # noqa: F401
+from app.models.message import ConversationMessage  # noqa: F401
 
 __all__ = [
     "Base",

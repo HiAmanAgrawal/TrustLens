@@ -35,5 +35,14 @@
 
   "nutrition.high_sugar": "⚠️ High sugar content: {amount}g per serving.",
   "nutrition.high_sodium": "⚠️ High sodium content: {amount}mg per serving.",
-  "nutrition.high_fat": "⚠️ High saturated fat: {amount}g per serving."
+  "nutrition.high_fat": "⚠️ High saturated fat: {amount}g per serving.",
+
+  "onboarding.welcome": "👋 Welcome to *TrustLens*!\n\nI can verify medicines and grocery products for authenticity, expiry, allergens, and fake labels — all over WhatsApp, no app needed.\n\nLet's set up your profile first. What's your name?",
+  "onboarding.ask_name": "What's your name?",
+  "onboarding.ask_diet": "Thanks, {name}! 🥗\n\nWhat's your dietary preference?\nReply: *veg*, *vegan*, *non-veg*, *jain*, or *halal*",
+  "onboarding.ask_allergies": "Got it! Do you have any food allergies or intolerances?\n\nExamples: peanuts, milk, gluten, eggs\nOr reply *none* to skip.",
+  "onboarding.ask_medicines": "Almost done! Do you take any regular medicines?\n\nExamples: Metformin, Aspirin, Amlodipine\nOr reply *none* to skip.\n\n_I'll flag drug interactions when you scan a new medicine._",
+  "onboarding.complete": "✅ You're all set, {name}!\n\n📸 Send me a photo of any medicine or grocery barcode to get started.\n💬 Or type a barcode number directly.",
+  "onboarding.invalid_diet": "I didn't catch that. Please reply with one of:\n*veg*, *vegan*, *non-veg*, *jain*, or *halal*",
+  "onboarding.skip": "Skipped ✓"
 }

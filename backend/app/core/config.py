@@ -18,8 +18,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    # Search for .env in the current working directory first, then one level up
+    # (repo root). This lets the server be started from either backend/ or the
+    # project root without needing a separate env file in each location.
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "../.env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
