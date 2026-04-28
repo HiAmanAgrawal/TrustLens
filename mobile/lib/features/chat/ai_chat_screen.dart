@@ -1,37 +1,28 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
+import '../../providers/chat_provider.dart';
+import '../../providers/scan_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/wobbly_borders.dart';
 import '../../widgets/chat_bubble.dart';
 import '../../widgets/dot_grid_background.dart';
 
 /// AI Health Chat screen — full-screen chat interface.
-/// Supports scan context pre-loading and standalone health Q&A.
-class AiChatScreen extends StatefulWidget {
+/// Uses Riverpod chatProvider for real backend AI chat via /api/ai/chat.
+class AiChatScreen extends ConsumerStatefulWidget {
   const AiChatScreen({super.key});
 
   @override
-  State<AiChatScreen> createState() => _AiChatScreenState();
+  ConsumerState<AiChatScreen> createState() => _AiChatScreenState();
 }
 
-class _AiChatScreenState extends State<AiChatScreen> {
+class _AiChatScreenState extends ConsumerState<AiChatScreen> {
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
-  bool _isTyping = false;
-
-  // Mock conversation
-  final List<_ChatMsg> _messages = [
-    _ChatMsg(
-      'I analyzed your scan. Here\'s what I found \u2014 feel free to ask me anything about it.\n\n'
-      'Your Dolo-650 tablet (Batch: DOBS3975) has been verified against Micro Labs Limited\'s records. '
-      'The match score is 8.5/10, which indicates a genuine product.',
-      false,
-      ['What about side effects?', 'Is it safe during pregnancy?', 'Any drug interactions?'],
-    ),
-  ];
 
   @override
   void dispose() {
@@ -40,65 +31,22 @@ class _AiChatScreenState extends State<AiChatScreen> {
     super.dispose();
   }
 
-  void _sendMessage(String text) {
-    if (text.trim().isEmpty) return;
-
-    setState(() {
-      _messages.add(_ChatMsg(text.trim(), true, null));
-      _messageController.clear();
-      _isTyping = true;
-    });
-
-    _scrollToBottom();
-
-    // Simulate AI response after a delay
-    Future.delayed(const Duration(milliseconds: 1500), () {
+  @override
+  void initState() {
+    super.initState();
+    // Defer provider mutation until after the first build completes.
+    Future.microtask(() {
       if (!mounted) return;
-      setState(() {
-        _isTyping = false;
-        _messages.add(_ChatMsg(
-          _getMockResponse(text),
-          false,
-          ['Tell me more', 'What should I do?', 'Is this common?'],
-        ));
-      });
-      _scrollToBottom();
+      final scanState = ref.read(scanProvider);
+      ref.read(chatProvider.notifier).initWithContext(scanState.result);
     });
   }
 
-  String _getMockResponse(String userMessage) {
-    final lower = userMessage.toLowerCase();
-    if (lower.contains('side effect')) {
-      return 'Common side effects of Paracetamol (Dolo-650) include:\n\n'
-          '\u2022 Nausea (in ~5% of users)\n'
-          '\u2022 Mild stomach discomfort\n'
-          '\u2022 Rarely, skin rash or allergic reactions\n\n'
-          'Serious side effects are rare at recommended doses. However, exceeding 4g/day can cause '
-          'liver damage. Always follow your doctor\'s prescribed dosage.\n\n'
-          '\u26A0 This is not medical advice. Consult a qualified healthcare provider for medical decisions.';
-    }
-    if (lower.contains('pregnan')) {
-      return 'Paracetamol is generally considered safe during pregnancy when taken at recommended doses. '
-          'It is the preferred analgesic and antipyretic during all trimesters.\n\n'
-          'However, recent studies suggest prolonged use may have some risks. Always consult your '
-          'obstetrician before taking any medication during pregnancy.\n\n'
-          '\u26A0 This is not medical advice. Consult a qualified healthcare provider for medical decisions.';
-    }
-    if (lower.contains('interaction')) {
-      return 'Known interactions for Paracetamol:\n\n'
-          '\u2022 Warfarin \u2014 may increase bleeding risk\n'
-          '\u2022 Alcohol \u2014 increases liver toxicity risk\n'
-          '\u2022 Isoniazid \u2014 may increase liver toxicity\n'
-          '\u2022 Carbamazepine \u2014 may reduce efficacy\n\n'
-          'Based on your profile, the caffeine in this formulation may mildly interact with your '
-          'hypertension medication.\n\n'
-          '\u26A0 This is not medical advice. Consult a qualified healthcare provider for medical decisions.';
-    }
-    return 'That\'s a great question. Based on the scan data and your health profile, '
-        'I can tell you that this product appears to be safe for general use. However, '
-        'I\'d recommend discussing any specific concerns with your healthcare provider, '
-        'especially given your health conditions.\n\n'
-        '\u26A0 This is not medical advice. Consult a qualified healthcare provider for medical decisions.';
+  void _sendMessage(String text) {
+    if (text.trim().isEmpty) return;
+    _messageController.clear();
+    ref.read(chatProvider.notifier).sendMessage(text);
+    _scrollToBottom();
   }
 
   void _scrollToBottom() {
@@ -115,29 +63,35 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final chatState = ref.watch(chatProvider);
+
+    // Auto-scroll when new messages arrive.
+    ref.listen(chatProvider, (prev, next) {
+      if (prev != null && next.messages.length > prev.messages.length) {
+        _scrollToBottom();
+      }
+    });
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: DotGridBackground(
         child: SafeArea(
           child: Column(
             children: [
-              // App bar
               _buildAppBar(context),
-              // Disclaimer
               _buildDisclaimer(),
-              // Messages
               Expanded(
                 child: ListView.builder(
                   controller: _scrollController,
                   padding: const EdgeInsets.symmetric(vertical: 8),
-                  itemCount: _messages.length + (_isTyping ? 1 : 0),
+                  itemCount: chatState.messages.length + (chatState.isTyping ? 1 : 0),
                   itemBuilder: (context, index) {
-                    if (index == _messages.length && _isTyping) {
+                    if (index == chatState.messages.length && chatState.isTyping) {
                       return const TypingIndicator();
                     }
-                    final msg = _messages[index];
+                    final msg = chatState.messages[index];
                     return ChatBubble(
-                      message: msg.text,
+                      message: msg.content,
                       isUser: msg.isUser,
                       suggestions: msg.suggestions,
                       onSuggestionTap: (s) => _sendMessage(s),
@@ -145,7 +99,6 @@ class _AiChatScreenState extends State<AiChatScreen> {
                   },
                 ),
               ),
-              // Input bar
               _buildInputBar(),
             ],
           ),
@@ -167,7 +120,6 @@ class _AiChatScreenState extends State<AiChatScreen> {
             icon: const Icon(LucideIcons.arrowLeft, color: AppColors.onBackground),
             tooltip: 'Go back',
           ),
-          // Bot avatar
           Container(
             width: 32,
             height: 32,
@@ -268,11 +220,4 @@ class _AiChatScreenState extends State<AiChatScreen> {
       ),
     );
   }
-}
-
-class _ChatMsg {
-  final String text;
-  final bool isUser;
-  final List<String>? suggestions;
-  _ChatMsg(this.text, this.isUser, this.suggestions);
 }

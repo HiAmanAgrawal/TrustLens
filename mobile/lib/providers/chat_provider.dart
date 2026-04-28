@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/chat_message.dart';
@@ -81,9 +82,20 @@ class ChatNotifier extends StateNotifier<ChatState> {
     );
 
     try {
-      final api = ref.read(mockApiServiceProvider);
+      final api = ref.read(apiServiceProvider);
+      final scanCtx = state.scanContext != null
+          ? {
+              'product': state.scanContext!.productName,
+              'verdict': state.scanContext!.verdict,
+              'score': state.scanContext!.score,
+              'summary': state.scanContext!.summary,
+              'category': state.scanContext!.category,
+            }
+          : null;
+
       final response = await api.sendChatMessage(
         messages: state.messages,
+        scanContext: scanCtx,
       );
 
       final aiMsg = ChatMessage(
@@ -95,6 +107,19 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
       state = state.copyWith(
         messages: [...state.messages, aiMsg],
+        isTyping: false,
+      );
+    } on DioException catch (e) {
+      final detail = e.type == DioExceptionType.connectionError
+          ? 'Cannot reach the backend. Check your URL in Profile settings.'
+          : 'Network error — please try again.';
+      final errorMsg = ChatMessage(
+        role: 'assistant',
+        content: 'Sorry, I encountered an error: $detail',
+        timestamp: DateTime.now(),
+      );
+      state = state.copyWith(
+        messages: [...state.messages, errorMsg],
         isTyping: false,
       );
     } catch (e) {

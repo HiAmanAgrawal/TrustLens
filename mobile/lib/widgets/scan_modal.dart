@@ -1,23 +1,85 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
+import '../providers/scan_provider.dart';
 import '../theme/app_theme.dart';
 import '../theme/wobbly_borders.dart';
 
 /// Bottom sheet scan type selector.
 /// Step 1: Choose Medicine or Food.
-/// Step 2: Choose Camera or Upload.
-class ScanModal extends StatefulWidget {
+/// Step 2: Choose Camera, Upload, or Enter Code.
+class ScanModal extends ConsumerStatefulWidget {
   const ScanModal({super.key});
 
   @override
-  State<ScanModal> createState() => _ScanModalState();
+  ConsumerState<ScanModal> createState() => _ScanModalState();
 }
 
-class _ScanModalState extends State<ScanModal> {
+class _ScanModalState extends ConsumerState<ScanModal> {
   String? _selectedType; // 'medicine' or 'food'
+  final _picker = ImagePicker();
+  final _codeController = TextEditingController();
+  bool _showCodeInput = false;
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      final picked = await _picker.pickImage(
+        source: source,
+        maxWidth: 2048,
+        maxHeight: 2048,
+        imageQuality: 85,
+      );
+      if (picked == null) return;
+
+      final bytes = await picked.readAsBytes();
+      final filename = picked.name;
+
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      context.push('/scan-result');
+
+      ref.read(scanProvider.notifier).scanImage(bytes, filename: filename);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            source == ImageSource.camera
+                ? 'Could not open camera. Check permissions in Settings.'
+                : 'Could not open gallery. Check permissions in Settings.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  void _submitCode() {
+    final code = _codeController.text.trim();
+    if (code.length < 4) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter at least 4 characters.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    Navigator.of(context).pop();
+    context.push('/scan-result');
+    ref.read(scanProvider.notifier).scanCode(code);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -42,7 +104,11 @@ class _ScanModalState extends State<ScanModal> {
           ),
           const SizedBox(height: 20),
           Text(
-            _selectedType == null ? 'What are you scanning?' : 'How do you want to scan?',
+            _selectedType == null
+                ? 'What are you scanning?'
+                : _showCodeInput
+                    ? 'Enter barcode / QR text'
+                    : 'How do you want to scan?',
             style: GoogleFonts.plusJakartaSans(
               fontSize: 22,
               fontWeight: FontWeight.w700,
@@ -50,7 +116,12 @@ class _ScanModalState extends State<ScanModal> {
             ),
           ),
           const SizedBox(height: 20),
-          if (_selectedType == null) _buildTypeSelector() else _buildInputMethodSelector(),
+          if (_selectedType == null)
+            _buildTypeSelector()
+          else if (_showCodeInput)
+            _buildCodeInput()
+          else
+            _buildInputMethodSelector(),
           const SizedBox(height: 12),
         ],
       ),
@@ -97,11 +168,7 @@ class _ScanModalState extends State<ScanModal> {
                 title: 'Use Camera',
                 subtitle: 'Take a photo of the product',
                 isSelected: false,
-                onTap: () {
-                  Navigator.of(context).pop();
-                  // TODO: Open camera — will be wired in Phase 2
-                  context.push('/scan-result');
-                },
+                onTap: () => _pickImage(ImageSource.camera),
               ),
             ),
             const SizedBox(width: 12),
@@ -112,20 +179,80 @@ class _ScanModalState extends State<ScanModal> {
                 title: 'Upload Photo',
                 subtitle: 'Choose from your gallery',
                 isSelected: false,
-                onTap: () {
-                  Navigator.of(context).pop();
-                  // TODO: Open gallery — will be wired in Phase 2
-                  context.push('/scan-result');
-                },
+                onTap: () => _pickImage(ImageSource.gallery),
               ),
             ),
           ],
+        ),
+        const SizedBox(height: 12),
+        _ScanOptionCard(
+          icon: LucideIcons.keyboard,
+          emoji: '\u2328\uFE0F',
+          title: 'Enter Code',
+          subtitle: 'Type or paste a barcode / QR / URL',
+          isSelected: false,
+          onTap: () => setState(() => _showCodeInput = true),
         ),
         const SizedBox(height: 12),
         GestureDetector(
           onTap: () => setState(() => _selectedType = null),
           child: Text(
             '\u2190 Back to scan type',
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 15,
+              color: AppColors.secondary,
+              decoration: TextDecoration.underline,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCodeInput() {
+    return Column(
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.background,
+            borderRadius: WobblyBorders.input,
+            border: Border.all(color: AppColors.border, width: 1.5),
+          ),
+          child: TextField(
+            controller: _codeController,
+            style: GoogleFonts.plusJakartaSans(fontSize: 16, color: AppColors.onBackground),
+            decoration: InputDecoration(
+              hintText: 'e.g. https://verify.site.com/XYZ or 8901234567890',
+              hintStyle: GoogleFonts.plusJakartaSans(
+                fontSize: 14,
+                color: AppColors.onBackground.withValues(alpha: 0.4),
+              ),
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            ),
+            onSubmitted: (_) => _submitCode(),
+            textInputAction: TextInputAction.go,
+          ),
+        ),
+        const SizedBox(height: 14),
+        SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: ElevatedButton(
+            onPressed: _submitCode,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: AppColors.onPrimary,
+              shape: RoundedRectangleBorder(borderRadius: WobblyBorders.button),
+            ),
+            child: Text('Verify Code', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600, fontSize: 16)),
+          ),
+        ),
+        const SizedBox(height: 12),
+        GestureDetector(
+          onTap: () => setState(() => _showCodeInput = false),
+          child: Text(
+            '\u2190 Back to scan options',
             style: GoogleFonts.plusJakartaSans(
               fontSize: 15,
               color: AppColors.secondary,

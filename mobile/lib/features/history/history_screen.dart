@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
+import '../../models/scan_result.dart';
+import '../../providers/history_provider.dart';
+import '../../providers/scan_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/wobbly_borders.dart';
 import '../../widgets/dot_grid_background.dart';
@@ -11,29 +16,25 @@ import '../../widgets/scan_type_badge.dart';
 import '../../widgets/wobbly_card.dart';
 
 /// History screen — chronological scan cards with filter bar.
-class HistoryScreen extends StatefulWidget {
+/// Reads from historyProvider which is populated by real scans.
+class HistoryScreen extends ConsumerStatefulWidget {
   const HistoryScreen({super.key});
 
   @override
-  State<HistoryScreen> createState() => _HistoryScreenState();
+  ConsumerState<HistoryScreen> createState() => _HistoryScreenState();
 }
 
-class _HistoryScreenState extends State<HistoryScreen> {
+class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   String _activeFilter = 'All';
 
   final _filters = ['All', 'Medicine', 'Food', 'Verified', 'Flagged'];
 
-  // Mock data
-  final _scans = [
-    _ScanItem('Dolo-650', ScanType.medicine, VerdictResult.verified, 'Apr 27, 2026'),
-    _ScanItem('Maggi Noodles', ScanType.food, VerdictResult.caution, 'Apr 26, 2026'),
-    _ScanItem('Crocin Advance', ScanType.medicine, VerdictResult.unverified, 'Apr 24, 2026'),
-    _ScanItem('Amul Butter', ScanType.food, VerdictResult.verified, 'Apr 23, 2026'),
-    _ScanItem('Paracetamol IP', ScanType.medicine, VerdictResult.verified, 'Apr 22, 2026'),
-  ];
-
   @override
   Widget build(BuildContext context) {
+    // Watch the provider to rebuild on changes.
+    ref.watch(historyProvider);
+    final filteredScans = ref.read(historyProvider.notifier).filterByType(_activeFilter);
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: DotGridBackground(
@@ -41,7 +42,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // App bar
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
                 child: Text(
@@ -53,12 +53,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   ),
                 ),
               ),
-              // Filter bar
               _buildFilterBar(),
               const SizedBox(height: 8),
-              // Scan list
               Expanded(
-                child: _scans.isEmpty ? _buildEmptyState() : _buildScanList(),
+                child: filteredScans.isEmpty ? _buildEmptyState() : _buildScanList(filteredScans),
               ),
             ],
           ),
@@ -106,20 +104,32 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  Widget _buildScanList() {
+  Widget _buildScanList(List<ScanResult> scans) {
+    final dateFmt = DateFormat('MMM d, yyyy');
+
     return ListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-      itemCount: _scans.length,
+      itemCount: scans.length,
       itemBuilder: (context, index) {
-        final scan = _scans[index];
+        final scan = scans[index];
+        final scanType = scan.isFood ? ScanType.food : ScanType.medicine;
+        final verdict = scan.verdict == 'safe'
+            ? VerdictResult.verified
+            : scan.verdict == 'caution'
+                ? VerdictResult.caution
+                : VerdictResult.unverified;
+        final dateStr = dateFmt.format(scan.scannedAt);
+
         return Padding(
           padding: const EdgeInsets.only(bottom: 12),
           child: WobblyCard(
-            onTap: () => context.push('/scan-result'),
+            onTap: () {
+              ref.read(scanProvider.notifier).restoreResult(scan);
+              context.push('/scan-result');
+            },
             padding: const EdgeInsets.all(14),
             child: Row(
               children: [
-                // Thumbnail placeholder
                 Container(
                   width: 52,
                   height: 52,
@@ -129,7 +139,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     border: Border.all(color: AppColors.border, width: 1.5),
                   ),
                   child: Icon(
-                    scan.type == ScanType.medicine
+                    scanType == ScanType.medicine
                         ? LucideIcons.pill
                         : LucideIcons.utensilsCrossed,
                     size: 22,
@@ -142,7 +152,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        scan.name,
+                        scan.productName,
                         style: GoogleFonts.plusJakartaSans(
                           fontSize: 16,
                           fontWeight: FontWeight.w700,
@@ -152,10 +162,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       const SizedBox(height: 4),
                       Row(
                         children: [
-                          ScanTypeBadge(type: scan.type),
+                          ScanTypeBadge(type: scanType),
                           const SizedBox(width: 8),
                           Text(
-                            scan.date,
+                            dateStr,
                             style: GoogleFonts.plusJakartaSans(
                               fontSize: 13,
                               color: AppColors.onBackground.withValues(alpha: 0.5),
@@ -166,7 +176,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     ],
                   ),
                 ),
-                _buildMiniResult(scan.result),
+                _buildMiniResult(verdict),
               ],
             ),
           ),
@@ -246,10 +256,3 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 }
 
-class _ScanItem {
-  final String name;
-  final ScanType type;
-  final VerdictResult result;
-  final String date;
-  _ScanItem(this.name, this.type, this.result, this.date);
-}

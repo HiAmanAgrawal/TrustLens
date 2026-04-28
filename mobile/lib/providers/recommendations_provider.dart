@@ -26,11 +26,18 @@ class RecommendationsNotifier extends StateNotifier<RecommendationsState> {
   Future<void> loadRecommendations() async {
     state = const RecommendationsState(isLoading: true);
     try {
-      final api = ref.read(mockApiServiceProvider);
+      final api = ref.read(apiServiceProvider);
       final items = await api.getRecommendations();
       state = RecommendationsState(items: items);
-    } catch (e) {
-      state = RecommendationsState(error: e.toString());
+    } catch (_) {
+      // Backend doesn't have /api/recommendations yet — fall back to mock.
+      try {
+        final mock = ref.read(mockApiServiceProvider);
+        final items = await mock.getRecommendations();
+        state = RecommendationsState(items: items);
+      } catch (e) {
+        state = RecommendationsState(error: e.toString());
+      }
     }
   }
 

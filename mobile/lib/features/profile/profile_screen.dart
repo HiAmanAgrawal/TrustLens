@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../app.dart';
+import '../../providers/service_providers.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/wobbly_borders.dart';
 import '../../widgets/dot_grid_background.dart';
@@ -98,6 +99,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   ),
                 ],
               ),
+              const SizedBox(height: 12),
+              // Backend URL config
+              _buildBackendUrlSection(),
               const SizedBox(height: 12),
               // Dark mode toggle
               _buildDarkModeToggle(),
@@ -298,6 +302,88 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               ref.read(themeModeProvider.notifier).state =
                   value ? ThemeMode.dark : ThemeMode.light;
             },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBackendUrlSection() {
+    final currentUrl = ref.watch(baseUrlProvider);
+
+    return WobblyCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(LucideIcons.server, size: 18, color: AppColors.secondary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Backend Server',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.onBackground,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Set the backend URL (e.g. ngrok URL for local dev).',
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 13,
+              color: AppColors.onBackground.withValues(alpha: 0.5),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            decoration: BoxDecoration(
+              color: AppColors.background,
+              borderRadius: WobblyBorders.input,
+              border: Border.all(color: AppColors.border, width: 1.5),
+            ),
+            child: TextField(
+              controller: TextEditingController(text: currentUrl),
+              style: GoogleFonts.plusJakartaSans(fontSize: 14, color: AppColors.onBackground),
+              decoration: InputDecoration(
+                hintText: 'http://10.0.2.2:8000',
+                hintStyle: GoogleFonts.plusJakartaSans(
+                  fontSize: 14,
+                  color: AppColors.onBackground.withValues(alpha: 0.4),
+                ),
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                suffixIcon: IconButton(
+                  icon: const Icon(LucideIcons.check, size: 18, color: AppColors.secondary),
+                  onPressed: () {},
+                ),
+              ),
+              onSubmitted: (value) {
+                final trimmed = value.trim();
+                if (trimmed.isNotEmpty) {
+                  ref.read(baseUrlProvider.notifier).state = trimmed;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Backend URL updated to $trimmed'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
+              },
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Current: $currentUrl',
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 12,
+              color: AppColors.secondary,
+            ),
           ),
         ],
       ),

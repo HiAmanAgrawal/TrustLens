@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
+import '../../providers/history_provider.dart';
+import '../../providers/scan_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/wobbly_borders.dart';
 import '../../widgets/dot_grid_background.dart';
@@ -11,11 +15,11 @@ import '../../widgets/scan_type_badge.dart';
 import '../../widgets/wobbly_card.dart';
 
 /// Home screen — hero banner, quick actions, recent scans, recommendations, health tip.
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: DotGridBackground(
@@ -31,7 +35,7 @@ class HomeScreen extends StatelessWidget {
               SliverToBoxAdapter(child: _buildQuickActionsGrid(context)),
               // Recent scans
               SliverToBoxAdapter(child: _buildSectionHeader('Recent Scans')),
-              SliverToBoxAdapter(child: _buildRecentScans(context)),
+              SliverToBoxAdapter(child: _buildRecentScans(context, ref)),
               // Today's recommendations
               SliverToBoxAdapter(child: _buildSectionHeader("Today's Recommendations")),
               SliverToBoxAdapter(child: _buildRecommendations()),
@@ -214,34 +218,56 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildRecentScans(BuildContext context) {
-    // Mock data for recent scans
-    final scans = [
-      _MockScan('Dolo-650', ScanType.medicine, VerdictResult.verified, '2 hours ago'),
-      _MockScan('Maggi Noodles', ScanType.food, VerdictResult.caution, 'Yesterday'),
-      _MockScan('Crocin Advance', ScanType.medicine, VerdictResult.unverified, '3 days ago'),
-    ];
+  Widget _buildRecentScans(BuildContext context, WidgetRef ref) {
+    final history = ref.watch(historyProvider);
+    final recentScans = history.take(5).toList();
+    final timeFmt = DateFormat('MMM d');
+
+    if (recentScans.isEmpty) {
+      return SizedBox(
+        height: 130,
+        child: Center(
+          child: Text(
+            'No scans yet. Tap the scan button to get started!',
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 14,
+              color: AppColors.onBackground.withValues(alpha: 0.4),
+            ),
+          ),
+        ),
+      );
+    }
 
     return SizedBox(
       height: 130,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: scans.length,
+        itemCount: recentScans.length,
         itemBuilder: (context, index) {
-          final scan = scans[index];
+          final scan = recentScans[index];
+          final scanType = scan.isFood ? ScanType.food : ScanType.medicine;
+          final verdict = scan.verdict == 'safe'
+              ? VerdictResult.verified
+              : scan.verdict == 'caution'
+                  ? VerdictResult.caution
+                  : VerdictResult.unverified;
+
           return Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
             child: SizedBox(
               width: 180,
               child: WobblyCard(
-                onTap: () => context.push('/scan-result'),
+                onTap: () {
+                  ref.read(scanProvider.notifier).restoreResult(scan);
+                  context.push('/scan-result');
+                },
                 padding: const EdgeInsets.all(12),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      scan.name,
+                      scan.productName,
                       style: GoogleFonts.plusJakartaSans(
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
@@ -251,14 +277,14 @@ class HomeScreen extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 6),
-                    ScanTypeBadge(type: scan.type),
+                    ScanTypeBadge(type: scanType),
                     const Spacer(),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        _buildMiniResultBadge(scan.result),
+                        _buildMiniResultBadge(verdict),
                         Text(
-                          scan.time,
+                          timeFmt.format(scan.scannedAt),
                           style: GoogleFonts.plusJakartaSans(
                             fontSize: 12,
                             color: AppColors.onBackground.withValues(alpha: 0.5),
@@ -423,13 +449,6 @@ class _QuickAction {
   _QuickAction(this.title, this.icon, this.rotation, this.onTap);
 }
 
-class _MockScan {
-  final String name;
-  final ScanType type;
-  final VerdictResult result;
-  final String time;
-  _MockScan(this.name, this.type, this.result, this.time);
-}
 
 class _MockRec {
   final String name;
