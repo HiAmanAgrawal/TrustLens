@@ -212,6 +212,30 @@ class GroceryScanResponse(BaseModel):
     risk_band: Literal["low", "medium", "high", "unknown"]
     expiry_status: Literal["SAFE", "NEAR_EXPIRY", "EXPIRED", "UNKNOWN"]
 
+    # Phase 4: Trust Score
+    trust_score: int | None = Field(
+        None,
+        description="0-100 deterministic trust score. None if context insufficient.",
+    )
+    trust_label: str | None = Field(
+        None,
+        description="EXCELLENT / GOOD / MODERATE / POOR / VERY POOR",
+    )
+    trust_reasons: list[str] = Field(
+        default_factory=list,
+        description="Human-readable reasons behind the trust score.",
+    )
+
+    # Phase 4: Community reports
+    community_report_count: int = Field(
+        0,
+        description="Number of community reports for this product.",
+    )
+    community_flagged: bool = Field(
+        False,
+        description="True if ≥5 community reports have been filed.",
+    )
+
     dates: dict[str, str] = Field(
         default_factory=dict,
         description="Extracted date snippets keyed by kind: mfg, exp, best_before, use_by",

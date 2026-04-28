@@ -277,6 +277,14 @@ def format_grocery_scan(result: Any) -> str:
     risk    = r.get("risk_band") or "unknown"
     expiry  = r.get("expiry_status") or "UNKNOWN"
 
+    trust_score = r.get("trust_score")
+    trust_label = r.get("trust_label") or ""
+    trust_reasons = r.get("trust_reasons") or []
+    community_flagged = r.get("community_flagged", False)
+    community_count   = r.get("community_report_count", 0)
+
+    _TRUST_ICON = lambda s: "🟢" if s >= 80 else "🟡" if s >= 65 else "🟠" if s >= 50 else "🔴" if s >= 35 else "⛔"
+
     lines: list[str] = [
         "━━━━━━━━━━━━━━━━━━━━━━",
         "  TrustLens — Grocery Scan",
@@ -287,7 +295,17 @@ def format_grocery_scan(result: Any) -> str:
     if product and product != brand:
         lines.append(product)
     lines += ["", f"*Risk:* {_RISK_LABEL.get(risk, risk.upper())}",
-              f"*Expiry:* {_EXPIRY_LABEL.get(expiry, expiry)}", ""]
+              f"*Expiry:* {_EXPIRY_LABEL.get(expiry, expiry)}"]
+
+    # Phase 4: Trust Score
+    if trust_score is not None:
+        icon = _TRUST_ICON(trust_score)
+        lines.append(f"*Trust Score:* {icon} {trust_score}/100 — {trust_label}")
+        for reason in trust_reasons[:2]:
+            lines.append(f"  ↳ {reason}")
+    if community_flagged:
+        lines.append(f"⚠️ *Community flagged* ({community_count} reports — verify carefully)")
+    lines.append("")
 
     # Diet / additive flags (compact, single line)
     flags: list[str] = []

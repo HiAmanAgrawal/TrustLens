@@ -233,7 +233,11 @@ async def run_grocery_scan(
         )
 
     from app.schemas.pipeline import FindingSchema
-    response = GroceryScanResponse(
+    # Phase 4: compute trust score from the product context
+    from app.services.product_context import build_context_from_grocery_response
+    from app.services.trust_score_service import compute_trust_score
+
+    _tmp_response = GroceryScanResponse(
         risk_band=groc_result.risk_band,
         expiry_status=groc_result.expiry_status,
         dates=groc_result.dates,
@@ -255,6 +259,14 @@ async def run_grocery_scan(
         barcode_data=barcode_data,
         notes=groc_result.notes,
     )
+    product_ctx = build_context_from_grocery_response(_tmp_response, session_id="pipeline")
+    ts = compute_trust_score(product_ctx)
+
+    response = _tmp_response.model_copy(update={
+        "trust_score": ts.score,
+        "trust_label": ts.label,
+        "trust_reasons": ts.reasons,
+    })
     return event, response
 
 

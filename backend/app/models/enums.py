@@ -188,3 +188,30 @@ class OnboardingStepEnum(str, enum.Enum):
     AWAITING_MEDICINES = "awaiting_medicines"
     COMPLETE = "complete"
     ACTIVE = "active"
+
+
+class ReportTypeEnum(str, enum.Enum):
+    """
+    Community report categories for products.
+
+    SUSPICIOUS_LABEL   – Label information doesn't match manufacturer data.
+    ADVERSE_REACTION   – User experienced a bad reaction after consuming.
+    COUNTERFEIT        – Product believed to be fake / unauthorised copy.
+    QUALITY_ISSUE      – Visible damage, contamination, discolouration.
+    EXPIRED_SOLD       – Found being sold past its expiry date.
+    WRONG_PRODUCT      – Contents don't match what the packaging says.
+    """
+    SUSPICIOUS_LABEL = "suspicious_label"
+    ADVERSE_REACTION = "adverse_reaction"
+    COUNTERFEIT = "counterfeit"
+    QUALITY_ISSUE = "quality_issue"
+    EXPIRED_SOLD = "expired_sold"
+    WRONG_PRODUCT = "wrong_product"
+
+
+class RiskBandEnum(str, enum.Enum):
+    """Grocery product overall risk classification."""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    UNKNOWN = "unknown"

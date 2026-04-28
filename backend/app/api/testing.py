@@ -764,10 +764,21 @@ function addScanBubble(d, timing){
     const brand = pe.brand_name || pe.product_name || groc.product_extraction?.brand_name || '';
     lines.push(brand ? `📦 ${brand}` : '📦 Grocery product scanned');
     lines.push(`${rE} Risk: ${rb.toUpperCase()}`+(groc.expiry_status?` · Expiry: ${groc.expiry_status}`:''));
+
+    // Phase 4: Trust Score
+    if(groc.trust_score != null){
+      const ts = groc.trust_score;
+      const tl = groc.trust_label || '';
+      const tE = ts>=80?'🟢':ts>=65?'🟡':ts>=50?'🟠':ts>=35?'🔴':'⛔';
+      lines.push(`${tE} Trust Score: ${ts}/100 (${tl})`);
+    }
+    if(groc.community_flagged) lines.push(`⚠️ Community flagged (${groc.community_report_count} reports)`);
+
     const ingN = groc.ingredients_count || pe.ingredients?.length || null;
     if(ingN) lines.push(`🧪 ${ingN} ingredients`);
     (groc.findings||[]).filter(f=>f.severity==='error'||f.severity==='warning').slice(0,2)
       .forEach(f=>lines.push(`• ${f.message}`));
+    if((groc.allergen_warnings||[]).length) lines.push(`🚨 Allergen: ${groc.allergen_warnings.slice(0,2).join(', ')}`);
     if(groc.fssai?.online_status==='valid') lines.push('✅ FSSAI verified');
     else if(groc.fssai?.online_status==='invalid') lines.push('❌ FSSAI issue found');
   } else if(med){

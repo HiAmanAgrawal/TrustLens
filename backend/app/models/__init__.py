@@ -23,6 +23,8 @@ from app.models.enums import (  # noqa: F401
     OnboardingStepEnum,
     ProductTypeEnum,
     ReactionSeverityEnum,
+    ReportTypeEnum,
+    RiskBandEnum,
 )
 
 # Base must be imported after enums so the declarative registry is ready
@@ -44,6 +46,8 @@ from app.models.certification import ProductCertification  # noqa: F401
 from app.models.prescription import Prescription, PrescriptionItem  # noqa: F401
 from app.models.scan_event import MedicineScanEvent  # noqa: F401
 from app.models.message import ConversationMessage  # noqa: F401
+from app.models.community_report import CommunityReport  # noqa: F401
+from app.models.refill_reminder import RefillReminder  # noqa: F401
 
 __all__ = [
     "Base",
@@ -76,4 +80,8 @@ __all__ = [
     "Prescription",
     "PrescriptionItem",
     "MedicineScanEvent",
+    "CommunityReport",
+    "RefillReminder",
+    "ReportTypeEnum",
+    "RiskBandEnum",
 ]
