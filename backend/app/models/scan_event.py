@@ -74,6 +74,9 @@ class MedicineScanEvent(Base):
     verdict_details: Mapped[dict | None] = mapped_column(JSONB)
     # Two-letter ISO country code from IP geolocation; for India-level analytics
     country_code: Mapped[str | None] = mapped_column(sa.String(2))
+    # Phase 3: which pipeline handled this scan — "medicine" | "grocery" | "prescription"
+    # Nullable for backward-compatibility with Phase 1/2 rows that predate this column.
+    scan_type: Mapped[str | None] = mapped_column(sa.String(20), nullable=True, index=True)
     created_at: Mapped[created_at_col]
 
     user: Mapped["User | None"] = relationship("User", back_populates="scan_events")

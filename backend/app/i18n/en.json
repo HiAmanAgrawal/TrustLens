@@ -44,5 +44,41 @@
   "onboarding.ask_medicines": "Almost done! Do you take any regular medicines?\n\nExamples: Metformin, Aspirin, Amlodipine\nOr reply *none* to skip.\n\n_I'll flag drug interactions when you scan a new medicine._",
   "onboarding.complete": "✅ You're all set, {name}!\n\n📸 Send me a photo of any medicine or grocery barcode to get started.\n💬 Or type a barcode number directly.",
   "onboarding.invalid_diet": "I didn't catch that. Please reply with one of:\n*veg*, *vegan*, *non-veg*, *jain*, or *halal*",
-  "onboarding.skip": "Skipped ✓"
+  "onboarding.skip": "Skipped ✓",
+
+  "prescription.disclaimer": "⚕️ For information only. Never change your dosage or medication without your doctor's advice.",
+  "prescription.medicine_found": "✅ {name} found in our database.",
+  "prescription.medicine_not_found": "❓ {name} — not found in our database. Please verify with your pharmacist.",
+  "prescription.no_medicines": "No medicines could be read from this image. Please try a clearer photo.",
+
+  "expiry.status.safe": "✅ Expiry: {expiry_date} — {days} days remaining.",
+  "expiry.status.near_expiry": "⚠️ Expiring soon: {expiry_date} ({days} days left). Use quickly.",
+  "expiry.status.expired": "❌ Expired on {expiry_date}. Do not consume.",
+  "expiry.status.unknown": "❓ Expiry date not found on label.",
+
+  "storage.refrigerate": "🌡️ Keep refrigerated (2–8°C). Do not freeze unless instructed.",
+  "storage.freeze": "🧊 Keep frozen. Store at or below 0°C.",
+  "storage.cool_dry_place": "🏠 Store in a cool, dry place away from moisture and heat.",
+  "storage.room_temperature": "🌡️ Store at room temperature (15–30°C).",
+  "storage.avoid_sunlight": "☀️ Protect from direct sunlight.",
+  "storage.keep_dry": "💧 Keep dry. Moisture may degrade the product.",
+  "storage.away_from_children": "🚸 Keep out of reach of children.",
+  "storage.once_opened_use": "⏰ Once opened, use within the indicated period.",
+  "storage.away_from_heat": "🔥 Keep away from heat sources.",
+  "storage.controlled_temperature": "🌡️ Store below 25°C. Avoid temperature extremes.",
+
+  "grocery.risk.low": "✅ This product passed all safety checks.",
+  "grocery.risk.medium": "⚠️ Some concerns found — review before purchase.",
+  "grocery.risk.high": "❌ Serious issues detected — do not purchase without verifying.",
+  "grocery.risk.unknown": "❓ Could not complete analysis — insufficient label text.",
+
+  "fssai.tavily_fallback": "ℹ️ FSSAI portal was unreachable. Verified using web search (Tavily).",
+
+  "medicine.source.tavily_fallback": "ℹ️ Manufacturer portal was unreachable. Used web search as data source.",
+  "medicine.source.db_scraper": "✅ Verified against manufacturer portal.",
+  "medicine.source.db_only": "ℹ️ Product found in database but manufacturer portal was not checked.",
+
+  "scan.type.prescription": "Prescription",
+  "scan.type.medicine": "Medicine",
+  "scan.type.grocery": "Grocery Product"
 }

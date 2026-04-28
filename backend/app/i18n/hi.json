@@ -44,5 +44,35 @@
   "onboarding.ask_medicines": "लगभग हो गया! क्या आप कोई नियमित दवाइयाँ लेते हैं?\n\nउदाहरण: Metformin, Aspirin, Amlodipine\nया *none* टाइप करके छोड़ें।\n\n_जब आप नई दवा स्कैन करेंगे, मैं दवा प्रतिक्रियाएँ बताऊँगा।_",
   "onboarding.complete": "✅ सब तैयार है, {name}!\n\n📸 किसी भी दवा या किराने के बारकोड की फ़ोटो भेजें।\n💬 या सीधे बारकोड नंबर टाइप करें।",
   "onboarding.invalid_diet": "मैं समझ नहीं पाया। कृपया इनमें से एक जवाब दें:\n*शाकाहारी*, *वेगन*, *मांसाहारी*, *जैन*, या *हलाल*",
-  "onboarding.skip": "छोड़ दिया ✓"
+  "onboarding.skip": "छोड़ दिया ✓",
+
+  "prescription.disclaimer": "⚕️ केवल जानकारी के लिए। अपने डॉक्टर की सलाह के बिना कभी भी खुराक या दवा न बदलें।",
+  "prescription.medicine_found": "✅ {name} हमारे डेटाबेस में मिली।",
+  "prescription.medicine_not_found": "❓ {name} — हमारे डेटाबेस में नहीं मिली। अपने फार्मासिस्ट से जाँच करें।",
+  "prescription.no_medicines": "इस छवि से कोई दवा नहीं पढ़ी जा सकी। कृपया स्पष्ट फ़ोटो लें।",
+
+  "expiry.status.safe": "✅ समाप्ति: {expiry_date} — {days} दिन शेष।",
+  "expiry.status.near_expiry": "⚠️ जल्द समाप्त: {expiry_date} ({days} दिन शेष)। जल्दी उपयोग करें।",
+  "expiry.status.expired": "❌ {expiry_date} को समाप्त हो गया। उपयोग न करें।",
+  "expiry.status.unknown": "❓ लेबल पर समाप्ति तिथि नहीं मिली।",
+
+  "storage.refrigerate": "🌡️ ठंडे में रखें (2–8°C)।",
+  "storage.freeze": "🧊 जमाकर रखें।",
+  "storage.cool_dry_place": "🏠 ठंडी, सूखी जगह पर रखें।",
+  "storage.room_temperature": "🌡️ कमरे के तापमान पर रखें।",
+  "storage.avoid_sunlight": "☀️ सीधी धूप से बचाएं।",
+  "storage.keep_dry": "💧 सूखा रखें।",
+  "storage.away_from_children": "🚸 बच्चों की पहुँच से दूर रखें।",
+  "storage.once_opened_use": "⏰ खोलने के बाद निर्धारित समय में उपयोग करें।",
+  "storage.away_from_heat": "🔥 गर्मी से दूर रखें।",
+  "storage.controlled_temperature": "🌡️ 25°C से नीचे रखें।",
+
+  "grocery.risk.low": "✅ यह उत्पाद सभी सुरक्षा जाँच पास कर गया।",
+  "grocery.risk.medium": "⚠️ कुछ चिंताएँ मिलीं — खरीदने से पहले जाँचें।",
+  "grocery.risk.high": "❌ गंभीर समस्याएँ पाई गईं — बिना जाँचे न खरीदें।",
+  "grocery.risk.unknown": "❓ विश्लेषण पूरा नहीं हो सका।",
+
+  "scan.type.prescription": "प्रिस्क्रिप्शन",
+  "scan.type.medicine": "दवा",
+  "scan.type.grocery": "किराना उत्पाद"
 }

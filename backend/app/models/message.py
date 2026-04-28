@@ -55,7 +55,7 @@ class ConversationMessage(Base):
     message_type: Mapped[MessageTypeEnum] = mapped_column(
         sa.Enum(MessageTypeEnum, name="message_type_enum"),
         nullable=False,
-        server_default="text",
+        server_default="TEXT",
     )
     message_text: Mapped[str | None] = mapped_column(sa.Text)
     # Stores media URLs, MIME types, detected language, onboarding_step, etc.

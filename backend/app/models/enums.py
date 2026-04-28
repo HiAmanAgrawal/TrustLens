@@ -166,11 +166,12 @@ class MessageDirectionEnum(str, enum.Enum):
 
 
 class MessageTypeEnum(str, enum.Enum):
-    TEXT = "text"
-    IMAGE = "image"
-    AUDIO = "audio"
-    DOCUMENT = "document"
-    STICKER = "sticker"
+    # Values match the PostgreSQL enum created by the initial migration (uppercase).
+    TEXT = "TEXT"
+    IMAGE = "IMAGE"
+    AUDIO = "AUDIO"
+    DOCUMENT = "DOCUMENT"
+    STICKER = "STICKER"
 
 
 class OnboardingStepEnum(str, enum.Enum):
