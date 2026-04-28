@@ -148,6 +148,8 @@ async def run_medicine_scan(
         tavily_used=med_result.tavily_used,
         storage_warnings=[_storage_schema(w) for w in med_result.storage_warnings],
         notes=med_result.notes,
+        extracted_label=med_result.extracted_label or None,
+        ocr_text=(ocr_text or "")[:2000] if ocr_text else None,
     )
     return event, response
 
@@ -391,6 +393,8 @@ async def run_unified_scan(
             tavily_used=m.tavily_used,
             storage_warnings=[_storage_schema(w) for w in m.storage_warnings],
             notes=m.notes,
+            extracted_label=m.extracted_label or None,
+            ocr_text=(ocr_text or "")[:2000] if ocr_text else None,
         )
 
     elif unified.grocery_result:

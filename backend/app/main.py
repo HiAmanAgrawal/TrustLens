@@ -22,14 +22,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-<<<<<<< Updated upstream
 # Legacy routes (pre-Phase-1 pipeline — kept intact for backwards compatibility)
-from app.api import routes_codes, routes_health, routes_images, routes_whatsapp
 # New v1 API router
 from app.api.v1.router import router as v1_router
-=======
-from app.api import routes_ai_chat, routes_codes, routes_health, routes_images, routes_whatsapp
->>>>>>> Stashed changes
+from app.api import routes_ai_chat, routes_codes, routes_health, routes_images, routes_whatsapp, routes_meta_wa
 from app.core.config import get_settings
 from app.core.exceptions import TrustLensError
 from app.core.i18n import load_catalogues
@@ -129,11 +125,9 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
 
-<<<<<<< Updated upstream
     # ------------------------------------------------------------------ #
     # Exception handlers — every error shape goes through these handlers  #
     # ------------------------------------------------------------------ #
-=======
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -147,11 +141,10 @@ def create_app() -> FastAPI:
         _request: Request, exc: StarletteHTTPException
     ) -> JSONResponse:
         """Wrap HTTPExceptions in the unified ``ErrorResponse`` envelope.
->>>>>>> Stashed changes
 
     @app.exception_handler(TrustLensError)
     async def _domain_error_handler(request: Request, exc: TrustLensError) -> JSONResponse:
-        """
+        
         Domain errors raised in service layer → HTTP response with correct status.
 
         The service layer knows nothing about HTTP; this handler bridges the gap
@@ -209,6 +202,7 @@ def create_app() -> FastAPI:
     app.include_router(routes_images.router, prefix="/images", tags=["images"])
     app.include_router(routes_codes.router,  prefix="/codes",  tags=["codes"])
     app.include_router(routes_whatsapp.router, prefix="/webhook/whatsapp", tags=["whatsapp"])
+    app.include_router(routes_meta_wa.router,  prefix="/webhook/whatsapp/meta", tags=["whatsapp-meta"])
     app.include_router(routes_ai_chat.router, prefix="/api/ai", tags=["ai"])
 
     # New versioned API

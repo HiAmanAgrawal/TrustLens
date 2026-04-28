@@ -106,6 +106,13 @@ async def _process_message(parsed: twilio_adapter.ParsedWebhook) -> None:
                       bool(account_sid), bool(auth_token), bool(from_number))
         return
 
+    # Detect user's language style from incoming text so we can rephrase the reply.
+    from app.core.rephraser import detect_user_language, rephrase as rephrase_reply
+    incoming_text = parsed.body or ""
+    user_lang = detect_user_language(incoming_text)
+    if user_lang != "en":
+        logger.info("[%s] Detected language: %s", parsed.sender_phone, user_lang)
+
     try:
         # --- Route to the right handler ---
         if parsed.is_image:
@@ -123,6 +130,10 @@ async def _process_message(parsed: twilio_adapter.ParsedWebhook) -> None:
         else:
             logger.info("[%s] ROUTE -> WELCOME (empty body)", parsed.sender_phone)
             reply = format_welcome()
+
+        # Rephrase to Hinglish / Hindi if the user wrote in that style.
+        if user_lang != "en" and reply:
+            reply = await rephrase_reply(reply, user_lang, user_message=incoming_text)
 
         logger.info("[%s] SENDING REPLY (%d chars): %s", parsed.sender_phone, len(reply), reply[:100])
         twilio_adapter.send_message(
@@ -379,7 +390,31 @@ async def _handle_text(
         logger.info("[%s] Gemini follow-up answered (%d chars)", parsed.sender_phone, len(answer))
         return format_follow_up(answer)
 
-    # ── Priority 3: Conversational agent (onboarding / greeting) ────────────
+    # ── Priority 3: General knowledge question → product advisor w/ web search ─
+    # Detect question-style messages and route to the advisor even without a
+    # product context — it will use the search_web tool (Tavily + LLM rephrase).
+    _QUESTION_WORDS = ("what", "how", "why", "is ", "does", "can ", "will", "are ",
+                       "tell me", "should", "which", "when", "who ", "do ", "?")
+    is_question = (
+        text.endswith("?")
+        or any(text.lower().startswith(w) for w in _QUESTION_WORDS)
+        or "?" in text
+    )
+    if is_question and len(text) > 6:
+        logger.info("[%s] GENERAL-QUERY: routing to product advisor (no product context)", parsed.sender_phone)
+        try:
+            from app.agents.product_advisor.graph import run_product_advisor
+            result = await run_product_advisor(
+                text,
+                product_context=None,
+                session_id=parsed.sender_phone,
+            )
+            if result.get("answer") and not result.get("error"):
+                return format_advisor_reply(result["answer"], result.get("tools_called"))
+        except Exception:
+            logger.exception("[%s] General-query advisor failed — falling to conversation agent", parsed.sender_phone)
+
+    # ── Priority 4: Conversational agent (onboarding / greeting) ────────────
     logger.info("[%s] No scan context; routing to conversation agent", parsed.sender_phone)
     try:
         reply = await _run_agent(

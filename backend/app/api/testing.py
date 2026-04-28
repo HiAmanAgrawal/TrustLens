@@ -36,6 +36,7 @@ TRACKED_NODES = {"router", "onboarding", "existing_user_greeting"}
 class ChatRequest(BaseModel):
     wa_id: str = "whatsapp:+919876543210"
     message: str
+    lang: str = "auto"   # "auto" | "en" | "hinglish" | "hi"
 
 
 class NodeTrace(BaseModel):
@@ -127,6 +128,16 @@ async def send(req: ChatRequest, db: AsyncSession = Depends(get_async_session)) 
             t_prev = t_now
 
         reply = str(final_state.get("response_text") or "")
+
+        # Rephrase reply if lang is set (or auto-detected)
+        if reply:
+            try:
+                from app.core.rephraser import detect_user_language, rephrase as _rephrase
+                lang = req.lang if req.lang != "auto" else detect_user_language(req.message)
+                if lang != "en":
+                    reply = await _rephrase(reply, lang, user_message=req.message)
+            except Exception as exc:
+                logger.warning("testing.send | rephrase failed: %s", exc)
 
         # Persist outbound reply
         if reply:
@@ -286,6 +297,7 @@ async def testing_scan_upload(
 async def testing_ask(
     session_id: str = Form(...),
     question: str = Form(...),
+    lang: str = Form("auto"),
     db: AsyncSession = Depends(get_async_session),   # noqa: ARG001 — kept for consistency
 ) -> dict:
     """
@@ -294,25 +306,45 @@ async def testing_ask(
     Retrieves the product context stored by /testing/scan and passes it to
     the LangGraph product advisor agent. Returns the agent's answer + tools used.
     """
-    logger.info("testing.ask | session_id=%r question=%r", session_id, question[:100])
+    logger.info("testing.ask | session_id=%r question=%r lang=%r", session_id, question[:100], lang)
 
     from app.services.product_context import get_product_context
     from app.agents.product_advisor.graph import run_product_advisor
+    from app.core.rephraser import detect_user_language, rephrase as _rephrase
 
     product_context = await get_product_context(session_id)
     if not product_context:
         logger.warning("testing.ask | no context for session=%r", session_id)
 
+    # Build a user_profile hint so the advisor knows to respond in Hinglish
+    user_lang = lang if lang != "auto" else detect_user_language(question)
+    user_profile: dict | None = None
+    if user_lang == "hinglish":
+        user_profile = {"preferred_language": "Hinglish (Hindi in Roman script + English mix)"}
+    elif user_lang == "hi":
+        user_profile = {"preferred_language": "Hindi (Devanagari script)"}
+
     result = await run_product_advisor(
         question,
         product_context=product_context,
+        user_profile=user_profile,
         session_id=session_id,
     )
+
+    answer = result["answer"] or ""
+    # Rephrase to Hinglish / Hindi if detected
+    if user_lang != "en" and answer:
+        try:
+            answer = await _rephrase(answer, user_lang, user_message=question)
+        except Exception as exc:
+            logger.warning("testing.ask | rephrase failed: %s", exc)
+
     return {
-        "answer": result["answer"],
+        "answer": answer,
         "tools_called": result["tools_called"],
         "error": result.get("error"),
         "context_found": product_context is not None,
+        "detected_lang": user_lang,
     }
 
 
@@ -544,6 +576,12 @@ header{background:#1e293b;border-bottom:1px solid #334155;padding:10px 20px;disp
           onmouseover="this.style.color='#38bdf8'" onmouseout="this.style.color='#64748b'">📎</button>
         <input id="chatFileInput" type="file" accept="image/*" style="display:none" onchange="chatFileChosen(this)">
         <textarea id="msgInput" class="msg-ta" placeholder="Type a message… or attach an image to scan a product"></textarea>
+        <select id="langSel" title="Reply language" style="background:#1e293b;border:1px solid #334155;color:#64748b;font-size:11px;padding:4px 6px;border-radius:6px;cursor:pointer;align-self:flex-end;height:36px">
+          <option value="auto">🌐 Auto</option>
+          <option value="en">EN</option>
+          <option value="hinglish">Hinglish</option>
+          <option value="hi">हिंदी</option>
+        </select>
         <button id="sendBtn" class="send-btn" onclick="sendMsg()">Send ↵</button>
       </div>
     </div>
@@ -554,6 +592,7 @@ header{background:#1e293b;border-bottom:1px solid #334155;padding:10px 20px;disp
     <div class="tab-bar">
       <div class="tab active"  onclick="tab('trace')">🔀 Trace</div>
       <div class="tab"         onclick="tab('state')">📦 State</div>
+      <div class="tab"         onclick="tab('scan')">📋 Scan Data</div>
       <div class="tab"         onclick="tab('session')">💾 Session</div>
       <div class="tab"         onclick="tab('messages')">💬 Messages</div>
       <div class="tab"         onclick="tab('user')">👤 User Profile</div>
@@ -561,6 +600,7 @@ header{background:#1e293b;border-bottom:1px solid #334155;padding:10px 20px;disp
     <div class="tab-body">
       <div id="pane-trace"   class="pane active"><div class="empty">Run a message to see the node execution trace.</div></div>
       <div id="pane-state"   class="pane"><div class="empty">Run a message to see the final ConversationState.</div></div>
+      <div id="pane-scan"    class="pane"><div id="scanContent" class="empty">Upload a product image to see extracted data.</div></div>
       <div id="pane-session" class="pane">
         <div class="sess-actions">
           <button class="btn-del" onclick="clearSess()">🗑 Reset Session</button>
@@ -581,7 +621,7 @@ function tab(name){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.pane').forEach(p=>p.classList.remove('active'));
   const tabs=[...document.querySelectorAll('.tab')];
-  const names=['trace','state','session','messages','user'];
+  const names=['trace','state','scan','session','messages','user'];
   tabs[names.indexOf(name)]?.classList.add('active');
   document.getElementById('pane-'+name)?.classList.add('active');
 }
@@ -668,6 +708,7 @@ async function sendMsg(){
       const fd = new FormData();
       fd.append('session_id', _sessionId);
       fd.append('question', msg);
+      fd.append('lang', document.getElementById('langSel')?.value || 'auto');
 
       const r = await fetch('/testing/ask',{method:'POST',body:fd});
       const d = await r.json();
@@ -689,10 +730,11 @@ async function sendMsg(){
     addBubble('user', msg);
     document.getElementById('loadText').textContent = 'Agent thinking…';
 
+    const lang = document.getElementById('langSel')?.value || 'auto';
     const r = await fetch('/testing/send',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({wa_id:waId,message:msg})
+      body:JSON.stringify({wa_id:waId,message:msg,lang})
     });
     const d = await r.json();
     const elapsed = Date.now()-t0;
@@ -782,9 +824,22 @@ function addScanBubble(d, timing){
     if(groc.fssai?.online_status==='valid') lines.push('✅ FSSAI verified');
     else if(groc.fssai?.online_status==='invalid') lines.push('❌ FSSAI issue found');
   } else if(med){
-    lines.push(med.brand_name ? `💊 ${med.brand_name}` : '💊 Medicine scanned');
-    if(med.verdict) lines.push(`Verdict: ${med.verdict}`);
-    if(med.expiry_status) lines.push(`Expiry: ${med.expiry_status}`);
+    const el = med.extracted_label || {};
+    const brand = med.brand_name || el.brand_name || '';
+    lines.push(brand ? `💊 ${brand}` : '💊 Medicine scanned');
+    if(el.salt || el.generic_name)
+      lines.push(`Salt: ${el.salt || el.generic_name}`);
+    if(el.batch_number)
+      lines.push(`Batch: ${el.batch_number}${el.mfg_date?' · MFG: '+el.mfg_date:''}${el.expiry_date?' · EXP: '+el.expiry_date:''}`);
+    const mfr = med.manufacturer_name || el.manufacturer || '';
+    if(mfr) lines.push(`Mfr: ${mfr}`);
+    if(med.verdict){
+      const vE = {VERIFIED:'✅',SUSPICIOUS:'⚠️',EXPIRED:'❌',UNKNOWN:'❓'}[med.verdict]||'❓';
+      lines.push(`${vE} Verdict: ${med.verdict}`+(med.verdict_score!=null?` (${med.verdict_score}/10)`:''));
+    }
+    if(med.expiry_status && med.expiry_status!=='UNKNOWN')
+      lines.push(`Expiry: ${med.expiry_status}`);
+    if(el.license_no) lines.push(`Lic: ${el.license_no}`);
   } else {
     lines.push('📷 Scan complete');
   }
@@ -809,6 +864,10 @@ function addScanBubble(d, timing){
   row.appendChild(wrap);
   c.appendChild(row);
   c.scrollTop=c.scrollHeight;
+
+  // Populate the Scan Data tab and auto-switch to it
+  renderScanData(d);
+  tab('scan');
 }
 
 // ── Advisor reply bubble (renders **bold** + tool badges) ────────────────────
@@ -880,6 +939,129 @@ function trunc(s,n){return s.length>n?s.slice(0,n)+'…':s;}
 // ── State panel ──────────────────────────────────────────────────────────────
 function renderState(state){
   document.getElementById('pane-state').innerHTML=`<div class="jv">${jhl(state)}</div>`;
+}
+
+// ── Scan Data panel ──────────────────────────────────────────────────────────
+function renderScanData(d){
+  const el = document.getElementById('scanContent');
+  if(!d||(!d.result&&!d.error)){el.innerHTML='<div class="empty">No scan data.</div>';return;}
+  if(d.error){el.innerHTML=`<div style="color:#fca5a5;padding:10px">${esc(d.error)}</div>`;return;}
+
+  const r   = d.result || {};
+  const st  = d.scan_type || 'unified';
+  const med = r.medicine || (st==='medicine'?r:null);
+  const groc= r.grocery  || (st==='grocery' ?r:null);
+  const pres= st==='prescription';
+
+  let html = '';
+
+  // ── Medicine fields ──────────────────────────────────────────────────────
+  if(med){
+    const el2 = med.extracted_label || {};
+    const fields = [
+      ['Brand / Trade Name',  med.brand_name || el2.brand_name],
+      ['Generic Name',        med.generic_name || el2.generic_name],
+      ['Salt / Composition',  el2.salt],
+      ['Batch Number',        el2.batch_number || med.batch_info?.batch_number],
+      ['MFG Date',            el2.mfg_date || med.batch_info?.manufacture_date],
+      ['Expiry Date',         el2.expiry_date || med.batch_info?.expiry_date],
+      ['Manufacturer',        med.manufacturer_name || el2.manufacturer],
+      ['Mfg Licence',         el2.license_no],
+      ['MRP',                 el2.mrp],
+      ['Verdict',             med.verdict],
+      ['Verdict Score',       med.verdict_score!=null ? med.verdict_score+'/10' : null],
+      ['Expiry Status',       med.expiry_status],
+      ['Source',              med.source],
+      ['Tavily Used',         med.tavily_used!=null ? String(med.tavily_used) : null],
+      ['Scan Event ID',       med.scan_event_id],
+    ];
+    html += `<div class="node-card">
+      <div class="nc-hdr"><span class="nbadge nb-default">💊 Medicine</span></div>
+      <table class="ch-table"><tr><th>Field</th><th>Value</th></tr>
+      ${fields.filter(([,v])=>v!=null&&v!==''&&v!==undefined).map(([k,v])=>`<tr><td>${esc(k)}</td><td class="${vcls(v)}">${esc(String(v))}</td></tr>`).join('')}
+      </table></div>`;
+
+    if(med.verdict_summary){
+      html+=`<div class="node-card"><div class="nc-hdr"><span class="nbadge nb-default">📝 Verdict Summary</span></div>
+        <div style="font-size:13px;color:#cbd5e1;line-height:1.5">${esc(med.verdict_summary)}</div></div>`;
+    }
+
+    if((med.storage_warnings||[]).length){
+      html+=`<div class="node-card"><div class="nc-hdr"><span class="nbadge nb-default">🗄 Storage</span></div>
+        <ul style="font-size:12px;color:#94a3b8;list-style:none;padding:0">
+        ${med.storage_warnings.map(w=>`<li style="padding:2px 0">• ${esc(w.message)}</li>`).join('')}
+        </ul></div>`;
+    }
+
+    if(med.ocr_text){
+      html+=`<div class="node-card"><div class="nc-hdr"><span class="nbadge nb-default">🔍 Raw OCR Text</span></div>
+        <div style="font-family:monospace;font-size:11px;color:#64748b;white-space:pre-wrap;max-height:160px;overflow-y:auto">${esc(med.ocr_text)}</div></div>`;
+    }
+  }
+
+  // ── Grocery fields ───────────────────────────────────────────────────────
+  if(groc){
+    const pe = groc.product_extraction || {};
+    const fields = [
+      ['Brand Name',       pe.brand_name],
+      ['Product Name',     pe.product_name],
+      ['Product Type',     pe.product_type],
+      ['Manufacturer',     pe.manufacturer],
+      ['Net Weight',       pe.net_weight],
+      ['Ingredients',      pe.ingredients?.length ? pe.ingredients.length+' items' : null],
+      ['Risk Band',        groc.risk_band],
+      ['Expiry Status',    groc.expiry_status],
+      ['Trust Score',      groc.trust_score!=null ? groc.trust_score+'/100 '+groc.trust_label : null],
+      ['FSSAI',            groc.fssai ? groc.fssai.license_number+' ('+groc.fssai.online_status+')' : null],
+      ['Calories',         pe.nutrition?.calories_kcal ? pe.nutrition.calories_kcal+' kcal' : null],
+      ['Sugar',            pe.nutrition?.sugar_g!=null ? pe.nutrition.sugar_g+'g/100g' : null],
+      ['Sodium',           pe.nutrition?.sodium_mg!=null ? pe.nutrition.sodium_mg+'mg/100g' : null],
+      ['Saturated Fat',    pe.nutrition?.saturated_fat_g!=null ? pe.nutrition.saturated_fat_g+'g/100g' : null],
+      ['Is Vegetarian',    pe.is_vegetarian!=null ? String(pe.is_vegetarian) : null],
+      ['Is Vegan',         pe.is_vegan!=null ? String(pe.is_vegan) : null],
+      ['Gluten Free',      pe.is_gluten_free!=null ? String(pe.is_gluten_free) : null],
+      ['Contains Added Sugar', pe.contains_added_sugar!=null ? String(pe.contains_added_sugar) : null],
+    ];
+    html += `<div class="node-card">
+      <div class="nc-hdr"><span class="nbadge nb-default">🛒 Grocery Product</span></div>
+      <table class="ch-table"><tr><th>Field</th><th>Value</th></tr>
+      ${fields.filter(([,v])=>v!=null&&v!=='').map(([k,v])=>`<tr><td>${esc(k)}</td><td class="${vcls(v)}">${esc(String(v))}</td></tr>`).join('')}
+      </table></div>`;
+
+    if((pe.positives||[]).length||(pe.negatives||[]).length){
+      html+=`<div class="node-card"><div class="nc-hdr"><span class="nbadge nb-default">📊 Analysis</span></div>
+        ${pe.positives?.map(p=>`<div style="color:#4ade80;font-size:12px;padding:1px 0">✅ ${esc(p)}</div>`).join('')||''}
+        ${pe.negatives?.map(n=>`<div style="color:#f87171;font-size:12px;padding:1px 0">⚠️ ${esc(n)}</div>`).join('')||''}
+      </div>`;
+    }
+
+    if((pe.ingredients||[]).length){
+      html+=`<div class="node-card"><div class="nc-hdr"><span class="nbadge nb-default">🧪 Ingredients (${pe.ingredients.length})</span></div>
+        <div style="font-size:11px;color:#94a3b8;line-height:1.7">${pe.ingredients.map(i=>esc(i)).join(' · ')}</div></div>`;
+    }
+  }
+
+  // ── Prescription fields ──────────────────────────────────────────────────
+  if(pres){
+    const cards = r.medicine_cards || [];
+    html += `<div class="node-card">
+      <div class="nc-hdr"><span class="nbadge nb-default">📋 Prescription — ${cards.length} medicine${cards.length!==1?'s':''}</span></div>
+      ${cards.map((c,i)=>`<div style="border-top:1px solid #334155;padding:6px 0;font-size:12px">
+        <span style="color:#7dd3fc">${i+1}. ${esc(c.prescribed?.raw_name||'?')}</span>
+        ${c.db_brand_name?`<span style="color:#94a3b8"> → ${esc(c.db_brand_name)}</span>`:''}
+        ${c.found_in_db?'<span style="color:#4ade80;margin-left:6px">✓ DB</span>':'<span style="color:#f87171;margin-left:6px">✗ not found</span>'}
+        ${c.prescribed?.dosage?`<span style="color:#64748b"> · ${esc(c.prescribed.dosage)}</span>`:''}
+      </div>`).join('')}
+    </div>`;
+  }
+
+  // ── Full raw JSON ────────────────────────────────────────────────────────
+  html += `<div class="node-card">
+    <div class="nc-hdr"><span class="nbadge nb-default">{ } Full JSON Payload</span></div>
+    <div class="jv" style="max-height:300px;overflow-y:auto">${jhl(d.result||{})}</div>
+  </div>`;
+
+  el.innerHTML = html;
 }
 
 // ── Session panel ────────────────────────────────────────────────────────────

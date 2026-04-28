@@ -157,7 +157,7 @@ class Settings(BaseSettings):
     # -----------------------------------------------------------------------
     use_ai_i18n: bool = False
     i18n_ai_provider: str = "gemini"      # gemini | lmstudio | openai
-    i18n_ai_model: str = "gemini-2.0-flash-lite"   # cheap/fast for translation
+    i18n_ai_model: str = "gemini-2.5-flash"   # fast model for translation / rephrasing
     # Base URL for OpenAI-compatible endpoints.
     # LM Studio default: http://localhost:1234/v1
     # Ollama default:    http://localhost:11434/v1

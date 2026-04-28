@@ -17,6 +17,8 @@ it stays reusable outside FastAPI (CLI, tests, WhatsApp handler).
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import date
@@ -62,6 +64,9 @@ class MedicineVerifyResult:
     generic_name: str | None = None
     manufacturer_name: str | None = None
     batch_info: BatchInfo | None = None
+
+    # Structured fields parsed from OCR text (populated when barcode DB lookup misses)
+    extracted_label: dict[str, Any] = field(default_factory=dict)
 
     # Evidence trail
     scrape_status: str = "skipped"                  # ok|timeout|failed|tavily_fallback|skipped
@@ -110,6 +115,46 @@ async def verify_medicine(
     if barcode_data:
         await _resolve_identity(result, barcode_data, session)
 
+    # --- Step 1.5: Structured label extraction from OCR text ---
+    # Runs whenever we have OCR text — fills brand/salt/batch/expiry/manufacturer
+    # from the label so Tavily and the matcher have real fields to work with even
+    # when the barcode isn't in our DB.
+    if ocr_text:
+        extracted = await _gemini_extract_label(ocr_text)
+        result.extracted_label = extracted
+        if extracted:
+            if not result.brand_name:
+                result.brand_name = extracted.get("brand_name")
+            if not result.generic_name:
+                result.generic_name = extracted.get("generic_name")
+            if not result.manufacturer_name:
+                result.manufacturer_name = extracted.get("manufacturer")
+            # Synthesise a BatchInfo from extracted dates when DB has no batch row
+            if not result.batch_info and extracted.get("batch_number"):
+                result.batch_info = BatchInfo(
+                    batch_id="extracted",
+                    batch_number=extracted.get("batch_number"),
+                    expiry_date=_parse_ym_date(extracted.get("expiry_date")),
+                    manufacture_date=_parse_ym_date(extracted.get("mfg_date")),
+                    is_expired=False,
+                )
+                # Check expiry on the synthesised batch
+                if result.batch_info.expiry_date:
+                    result.batch_info = BatchInfo(
+                        batch_id="extracted",
+                        batch_number=result.batch_info.batch_number,
+                        expiry_date=result.batch_info.expiry_date,
+                        manufacture_date=result.batch_info.manufacture_date,
+                        is_expired=result.batch_info.expiry_date < date.today(),
+                    )
+            logger.info(
+                "medicine_verify.label_extraction | brand=%r salt=%r batch=%r exp=%r",
+                extracted.get("brand_name"),
+                extracted.get("salt"),
+                extracted.get("batch_number"),
+                extracted.get("expiry_date"),
+            )
+
     # --- Step 2: Scrape manufacturer portal (if barcode is a URL) ---
     scraped_text: str | None = None
     if barcode_data and barcode_data.startswith(("http://", "https://")):
@@ -120,7 +165,7 @@ async def verify_medicine(
         scraped_text = await _tavily_fallback(result, barcode_data, ocr_text)
 
     # --- Step 4: Matcher comparison ---
-    _run_matcher(result, barcode_data, ocr_text, scraped_text)
+    await _run_matcher(result, barcode_data, ocr_text, scraped_text)
 
     # --- Step 5: Expiry hard-override ---
     if result.batch_info and result.batch_info.is_expired:
@@ -250,8 +295,13 @@ async def _tavily_fallback(
 
     try:
         from services.search.tavily import search_medicine_info
+        batch_no = (
+            (result.batch_info.batch_number if result.batch_info else None)
+            or result.extracted_label.get("batch_number")
+        )
         tavily_result = await search_medicine_info(
             product_name=product_name,
+            batch_no=batch_no,
             manufacturer=result.manufacturer_name,
         )
 
@@ -279,7 +329,7 @@ async def _tavily_fallback(
     return None
 
 
-def _run_matcher(
+async def _run_matcher(
     result: MedicineVerifyResult,
     barcode_data: str | None,
     ocr_text: str | None,
@@ -288,39 +338,43 @@ def _run_matcher(
     """
     Run the deterministic matcher engine and populate result.verdict.
 
-    Uses the existing services/matcher/engine.py ``compare()`` function.
-    Only skipped if we already know the batch is expired (verdict set in step 5).
+    Uses services/matcher/engine.py ``match()`` (async). Skipped when we
+    already have a definitive verdict (e.g. expired batch).
     """
     try:
-        from services.matcher.engine import compare
+        from services.matcher.engine import match
 
-        matcher_result = compare(
-            barcode_payload={"data": barcode_data} if barcode_data else {},
-            label_text=ocr_text or "",
-            scraped_text=scraped_text or "",
+        verdict = await match(
+            barcode_payload=barcode_data,
+            ocr_text=ocr_text or "",
+            scrape_data={"visible_text": scraped_text} if scraped_text else None,
         )
-        result.matcher_details = matcher_result
 
-        label = matcher_result.get("label", "unverifiable")
-        score = matcher_result.get("score")
-
-        # Map matcher labels to our verdict enum values
+        # Map Verdict dataclass fields to pipeline result
         _LABEL_MAP = {
-            "safe": "VERIFIED",
-            "caution": "SUSPICIOUS",
-            "high_risk": "SUSPICIOUS",
-            "unverifiable": "UNKNOWN",
+            "safe":          "VERIFIED",
+            "caution":       "SUSPICIOUS",
+            "high_risk":     "SUSPICIOUS",
+            "unverifiable":  "UNKNOWN",
         }
-        result.verdict = _LABEL_MAP.get(label, "UNKNOWN")
-        result.verdict_score = _clamp_score(score)
-        result.verdict_summary = matcher_result.get("summary") or ""
+        result.verdict          = _LABEL_MAP.get(verdict.verdict, "UNKNOWN")
+        result.verdict_score    = float(verdict.score) if verdict.score is not None else None
+        result.verdict_summary  = verdict.summary or ""
+        result.matcher_details  = {
+            "label":        verdict.verdict,
+            "score":        verdict.score,
+            "summary":      verdict.summary,
+            "evidence":     verdict.evidence,
+            "label_fields": verdict.label_fields,
+            "page_fields":  verdict.page_fields,
+        }
 
         if not result.source or result.source == "unknown":
             result.source = "matcher_only"
 
         logger.info(
             "medicine_verify._run_matcher | label=%s verdict=%s score=%s",
-            label, result.verdict, result.verdict_score,
+            verdict.verdict, result.verdict, result.verdict_score,
         )
 
     except Exception as exc:
@@ -356,3 +410,83 @@ def _clamp_score(raw: Any) -> float | None:
         return round(max(0.0, min(10.0, float(raw))), 2)
     except (TypeError, ValueError):
         return None
+
+
+def _parse_ym_date(ym_str: str | None) -> date | None:
+    """Parse a YYYY-MM string into a date (day=1). Returns None on failure."""
+    if not ym_str:
+        return None
+    try:
+        parts = ym_str.replace("/", "-").split("-")
+        if len(parts) >= 2:
+            return date(int(parts[0]), int(parts[1]), 1)
+    except (ValueError, IndexError):
+        pass
+    return None
+
+
+_EXTRACT_PROMPT = """\
+Extract structured fields from this medicine label OCR text. Return ONLY a valid JSON object — no explanations, no markdown.
+
+OCR text:
+{ocr_text}
+
+JSON schema (use null for fields not found):
+{{
+  "brand_name": "trade/brand name (e.g. Dolo-650)",
+  "generic_name": "full generic description (e.g. Paracetamol Tablets IP)",
+  "salt": "active ingredient + strength (e.g. Paracetamol IP 650 mg)",
+  "batch_number": "B.No. / Batch / Lot value (e.g. DOBSS3975)",
+  "mfg_date": "manufacture date as YYYY-MM (e.g. 2025-03)",
+  "expiry_date": "expiry date as YYYY-MM (e.g. 2029-02)",
+  "manufacturer": "manufacturer company name",
+  "license_no": "manufacturing licence number",
+  "mrp": "MRP if printed"
+}}"""
+
+
+async def _gemini_extract_label(ocr_text: str) -> dict[str, Any]:
+    """
+    Call Gemini (text mode) to parse raw OCR text into structured label fields.
+
+    Returns an empty dict on any failure so callers never have to handle exceptions.
+    Uses a 15-second timeout to avoid blocking the pipeline.
+    """
+    if not ocr_text.strip():
+        return {}
+    try:
+        from app.core.config import get_settings
+        s = get_settings()
+        if not s.google_api_key:
+            return {}
+
+        from google import genai
+        client = genai.Client(api_key=s.google_api_key)
+        prompt = _EXTRACT_PROMPT.format(ocr_text=ocr_text[:3000])
+
+        response = await asyncio.wait_for(
+            client.aio.models.generate_content(
+                model=s.google_vision_model,
+                contents=[prompt],
+            ),
+            timeout=15.0,
+        )
+        raw = (response.text or "").strip()
+        # Strip markdown code fences if present
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+
+        # Extract the JSON object from the response
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start == -1 or end == 0:
+            return {}
+        extracted: dict[str, Any] = json.loads(raw[start:end])
+        # Remove null values so callers can use simple `or` checks
+        return {k: v for k, v in extracted.items() if v is not None}
+
+    except Exception as exc:
+        logger.warning("medicine_verify._gemini_extract_label | failed: %s", exc)
+        return {}

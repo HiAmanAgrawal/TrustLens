@@ -78,32 +78,45 @@ Generate a warm, personalised welcome-back greeting following the system rules.
 
 CATALOGUE_ADDITIONS: dict[str, str] = {
     "onboarding.welcome": (
-        "👋 Welcome to *TrustLens*!\n\n"
-        "I can verify medicines and grocery products for authenticity, expiry, "
-        "allergens, and fake labels — all over WhatsApp, no app needed.\n\n"
-        "Let's set up your profile first. What's your name?"
+        "👋 *Hi! I'm TrustLens* — your personal product safety assistant.\n\n"
+        "In India, 1 in 4 medicines is counterfeit and most grocery labels go unread. "
+        "I help you fix that in seconds.\n\n"
+        "*📷 Send me a photo of:*\n"
+        "• A *medicine* — verify batch, check expiry & flag counterfeits\n"
+        "• A *grocery product* — score ingredients, check FSSAI & allergens\n"
+        "• A *prescription* — identify each drug and check interactions\n\n"
+        "*💬 Or just ask me anything:*\n"
+        "_\"Is paracetamol safe with alcohol?\"_\n"
+        "_\"What does FSSAI mean?\"_\n\n"
+        "Let's set up your safety profile first (takes 30 seconds).\n\n"
+        "*What's your name?*"
     ),
     "onboarding.ask_name": "What's your name?",
     "onboarding.ask_diet": (
-        "Thanks, {name}! 🥗\n\n"
+        "Nice to meet you, *{name}*! 🙏\n\n"
         "What's your dietary preference?\n"
-        "Reply: *veg*, *vegan*, *non-veg*, *jain*, or *halal*"
+        "Reply: *veg*, *vegan*, *non-veg*, *jain*, or *halal*\n\n"
+        "_(This helps me flag products that don't match your diet.)_"
     ),
     "onboarding.ask_allergies": (
         "Got it! Do you have any food allergies or intolerances?\n\n"
-        "Examples: peanuts, milk, gluten, eggs\n"
-        "Or reply *none* to skip."
+        "Examples: peanuts, milk, gluten, eggs, sesame\n"
+        "Or reply *none* to skip.\n\n"
+        "_(I'll warn you instantly if a scanned product contains these.)_"
     ),
     "onboarding.ask_medicines": (
         "Almost done! Do you take any regular medicines?\n\n"
         "Examples: Metformin, Aspirin, Amlodipine\n"
         "Or reply *none* to skip.\n\n"
-        "_I'll flag drug interactions when you scan a new medicine._"
+        "_(I'll automatically flag dangerous interactions when you scan a new medicine.)_"
     ),
     "onboarding.complete": (
-        "✅ You're all set, {name}!\n\n"
-        "📸 Send me a photo of any medicine or grocery barcode to get started.\n"
-        "💬 Or type a barcode number directly."
+        "✅ *You're all set, {name}!*\n\n"
+        "Your safety profile is saved. Here's what to do next:\n\n"
+        "📸 *Send a photo* of any medicine or grocery pack\n"
+        "💬 *Ask a question* — health, ingredients, safety\n"
+        "🔢 *Type a barcode number* to verify a medicine directly\n\n"
+        "I've got your back. 🛡️"
     ),
     "onboarding.invalid_diet": (
         "I didn't catch that. Please reply with one of:\n"

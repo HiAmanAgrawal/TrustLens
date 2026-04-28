@@ -205,17 +205,27 @@ def _build_fallback_greeting(
     """
     lines: list[str] = [f"👋 Welcome back, *{name}*!"]
 
+    profile_lines: list[str] = []
     if diet:
-        lines.append(f"Your dietary preference is set to *{diet}*.")
-
+        profile_lines.append(f"Diet: *{diet}*")
     if allergens:
-        a_str = ", ".join(allergens[:3])
-        lines.append(f"I'll alert you if products contain *{a_str}*.")
-
+        profile_lines.append(f"Alerts for: *{', '.join(allergens[:3])}*")
     if medicines:
-        m_str = ", ".join(medicines[:3])
-        lines.append(f"I see you're taking *{m_str}* — I'll flag any interactions.")
+        profile_lines.append(f"Tracking: *{', '.join(medicines[:3])}*")
 
-    lines.append("\n📸 Send me a product photo or type a barcode number to verify.")
+    if profile_lines:
+        lines.append("Your safety profile → " + " · ".join(profile_lines))
+
+    lines += [
+        "",
+        "*What I can do for you:*",
+        "📷 Scan a medicine, grocery pack, or prescription photo",
+        "🔍 Verify authenticity, expiry, FSSAI & batch details",
+        "🧪 Check allergens, diet conflicts & nutrition concerns",
+        "💊 Flag drug interactions with your current medicines",
+        "💬 Ask me anything — health questions, ingredient queries, drug info",
+        "",
+        "Send a photo or ask a question to get started.",
+    ]
 
     return "\n".join(lines)

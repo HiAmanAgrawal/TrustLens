@@ -37,12 +37,12 @@
   "nutrition.high_sodium": "⚠️ High sodium content: {amount}mg per serving.",
   "nutrition.high_fat": "⚠️ High saturated fat: {amount}g per serving.",
 
-  "onboarding.welcome": "👋 Welcome to *TrustLens*!\n\nI can verify medicines and grocery products for authenticity, expiry, allergens, and fake labels — all over WhatsApp, no app needed.\n\nLet's set up your profile first. What's your name?",
+  "onboarding.welcome": "👋 *Hi! I'm TrustLens* — your personal product safety assistant.\n\nIn India, 1 in 4 medicines is counterfeit and most grocery labels go unread. I help you fix that in seconds.\n\n*📷 Send me a photo of:*\n• A *medicine* — verify batch, check expiry & flag counterfeits\n• A *grocery product* — score ingredients, check FSSAI & allergens\n• A *prescription* — identify each drug and check interactions\n\n*💬 Or just ask me anything:*\n_\"Is paracetamol safe with alcohol?\"_\n_\"What does FSSAI mean?\"_\n\nLet's set up your safety profile first (takes 30 seconds).\n\n*What's your name?*",
   "onboarding.ask_name": "What's your name?",
-  "onboarding.ask_diet": "Thanks, {name}! 🥗\n\nWhat's your dietary preference?\nReply: *veg*, *vegan*, *non-veg*, *jain*, or *halal*",
-  "onboarding.ask_allergies": "Got it! Do you have any food allergies or intolerances?\n\nExamples: peanuts, milk, gluten, eggs\nOr reply *none* to skip.",
-  "onboarding.ask_medicines": "Almost done! Do you take any regular medicines?\n\nExamples: Metformin, Aspirin, Amlodipine\nOr reply *none* to skip.\n\n_I'll flag drug interactions when you scan a new medicine._",
-  "onboarding.complete": "✅ You're all set, {name}!\n\n📸 Send me a photo of any medicine or grocery barcode to get started.\n💬 Or type a barcode number directly.",
+  "onboarding.ask_diet": "Nice to meet you, *{name}*! 🙏\n\nWhat's your dietary preference?\nReply: *veg*, *vegan*, *non-veg*, *jain*, or *halal*\n\n_(This helps me flag products that don't match your diet.)_",
+  "onboarding.ask_allergies": "Got it! Do you have any food allergies or intolerances?\n\nExamples: peanuts, milk, gluten, eggs, sesame\nOr reply *none* to skip.\n\n_(I'll warn you instantly if a scanned product contains these.)_",
+  "onboarding.ask_medicines": "Almost done! Do you take any regular medicines?\n\nExamples: Metformin, Aspirin, Amlodipine\nOr reply *none* to skip.\n\n_(I'll automatically flag dangerous interactions when you scan a new medicine.)_",
+  "onboarding.complete": "✅ *You're all set, {name}!*\n\nYour safety profile is saved. Here's what to do next:\n\n📸 *Send a photo* of any medicine or grocery pack\n💬 *Ask a question* — health, ingredients, safety\n🔢 *Type a barcode number* to verify a medicine directly\n\nI've got your back. 🛡️",
   "onboarding.invalid_diet": "I didn't catch that. Please reply with one of:\n*veg*, *vegan*, *non-veg*, *jain*, or *halal*",
   "onboarding.skip": "Skipped ✓",
 

@@ -127,12 +127,27 @@ async def onboarding_node(
 # Step handlers
 # ---------------------------------------------------------------------------
 
+# Greetings that should trigger the welcome intro rather than being saved as a name.
+_GREETINGS = frozenset([
+    "hi", "hello", "hey", "hii", "hiii", "helo", "heya", "hiya",
+    "yo", "sup", "hai", "hai there", "hi there", "hello there",
+    "namaste", "namaskar", "vanakkam", "salaam",
+    "good morning", "good afternoon", "good evening", "good night",
+    "gm", "gn", "start", "begin", "help", "test", "👋", "🙏",
+])
+
+
 async def _handle_awaiting_name(
     wa_id: str, incoming: str, session_data: dict, lang: str
 ) -> dict:
     """Parse and save the user's name; ask about diet."""
     if not incoming:
-        return {"response_text": t("onboarding.ask_name", lang=lang)}
+        return {"response_text": t(ONBOARDING_WELCOME_KEY, lang=lang)}
+
+    # If the first message is a greeting, show the intro and ask for name
+    # without consuming it as the name.
+    if incoming.lower().strip().rstrip("!.?") in _GREETINGS:
+        return {"response_text": t(ONBOARDING_WELCOME_KEY, lang=lang)}
 
     name = parse_name(incoming)
     logger.info("onboarding.name_parsed | wa_id=%r name=%r", wa_id, name)

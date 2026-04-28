@@ -192,23 +192,28 @@ def format_info_only(verdict_dict: dict[str, Any]) -> str:
 
 
 def format_welcome() -> str:
-    """Welcome / usage hint for unrecognised messages."""
+    """First-contact welcome for new users or unrecognised messages."""
     return (
-        "*Welcome to TrustLens!* 🔍\n"
+        "👋 *Hi! I'm TrustLens* — your personal product safety assistant.\n"
         "\n"
-        "I help you verify medicines and grocery products.\n"
+        "In India, 20% of medicines are counterfeit and most grocery labels go "
+        "unread. I help you fix that in seconds.\n"
         "\n"
-        "*📷 Send a photo to:*\n"
-        "• Check if a medicine is authentic & safe\n"
-        "• Analyse a grocery product (ingredients, nutrition, FSSAI)\n"
-        "• Read a prescription and match medicines in our database\n"
+        "*📷 Send me a photo of:*\n"
+        "• A *medicine* — I'll verify the batch, check expiry & flag counterfeits\n"
+        "• A *grocery product* — I'll score ingredients, check FSSAI & allergens\n"
+        "• A *prescription* — I'll identify each drug and check interactions\n"
         "\n"
-        "After scanning, ask me anything:\n"
-        "_\"Is this safe for diabetics?\"_\n"
-        "_\"Does this have allergens?\"_\n"
-        "_\"How many calories per serving?\"_\n"
+        "*💬 Or just ask me anything:*\n"
+        "_\"Is paracetamol safe with alcohol?\"_\n"
+        "_\"What does FSSAI certification mean?\"_\n"
+        "_\"How much sodium is too much per day?\"_\n"
         "\n"
-        "Or *type* a barcode number / QR code URL to verify a medicine directly."
+        "*🔒 I personalise safety checks to your:*\n"
+        "• Allergens • Dietary preference • Regular medicines\n"
+        "\n"
+        "To set up your profile, just reply *Hi* and follow the quick 4-step setup.\n"
+        "Or send a product photo right now to get started."
     )
 
 

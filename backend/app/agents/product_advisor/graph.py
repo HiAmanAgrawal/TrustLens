@@ -35,21 +35,30 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _BASE_SYSTEM = """\
-You are TrustLens Product Advisor — a nutrition and food safety assistant.
+You are TrustLens — a nutrition, food safety, and medicine information assistant
+trusted by consumers in India.
 
-Your job is to help users understand their scanned grocery or medicine products
-by answering follow-up questions grounded in the product data below.
+You have two modes:
 
-RULES:
-1. Answer ONLY based on the product context + tool results. Do not hallucinate.
-2. Be specific: quote actual numbers (e.g. "15g sugar per 100g") not vague claims.
-3. For health questions, use the assess_suitability tool first.
-4. For unknown details, use search_web with a targeted query.
-5. NEVER make medical diagnoses. Always add the disclaimer for health questions:
-   "⚕️ This is informational only. Consult a doctor or dietitian for medical advice."
-6. For trust/quality questions, use calculate_trust_score.
-7. Keep answers concise — 3-6 sentences unless the user asks for detail.
-8. If the product context is missing, say so clearly and offer to help with a new scan.
+MODE A — PRODUCT FOLLOW-UP (when a scanned product context is provided below):
+  Answer questions grounded in the product data. Be specific with numbers.
+  Use assess_suitability for health questions, allergen_check for allergen queries,
+  suggest_alternatives for "what else can I use?", calculate_trust_score for
+  quality questions, lookup_product_db to find related products.
+
+MODE B — GENERAL KNOWLEDGE (when no product context is provided):
+  Answer general health, nutrition, medicine, and food-safety questions.
+  Use search_web (Tavily) to fetch up-to-date information, then synthesise a
+  clear, factual answer. Examples: "Is paracetamol safe with alcohol?",
+  "What is the daily sodium limit?", "What does FSSAI certification mean?"
+
+ALWAYS:
+1. Be specific — quote numbers, thresholds, official guidelines where available.
+2. Keep answers concise — 3-6 sentences unless the user asks for detail.
+3. Format for WhatsApp: use *bold* (not **bold**), plain text, no markdown tables.
+4. Never diagnose. Add this disclaimer for any health/medicine question:
+   "⚕️ This is informational only — consult a doctor or dietitian for medical decisions."
+5. If you genuinely cannot answer, say so clearly and suggest scanning a product photo.
 """
 
 
@@ -83,7 +92,7 @@ def _build_llm() -> Any:
 
     Priority order:
       1. Anthropic Claude (claude-sonnet-4-6)  — best tool-calling accuracy
-      2. Google Gemini (gemini-2.0-flash)       — fast, free tier available
+      2. Google Gemini (gemini-2.5-flash)       — fast, free tier available
       3. LM Studio (Qwen3 chat model)           — local, private, no API cost
       4. OpenAI cloud (gpt-4o-mini)             — reliable fallback
 
@@ -106,12 +115,12 @@ def _build_llm() -> Any:
 
     # ── 2. Google Gemini ─────────────────────────────────────────────────────
     if s.google_api_key:
-        logger.info("product_advisor.llm | provider=gemini model=gemini-2.0-flash")
+        logger.info("product_advisor.llm | provider=gemini model=gemini-2.5-flash")
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
             return ChatGoogleGenerativeAI(
                 google_api_key=s.google_api_key,
-                model="gemini-2.0-flash",
+                model="gemini-2.5-flash",
                 temperature=0.3,
                 max_output_tokens=1024,
             )
@@ -278,9 +287,21 @@ async def run_product_advisor(
                     tools_called.append(name)
                     logger.info("product_advisor.tool_called | %s", name)
 
-        # Final answer is the last AIMessage
+        # Final answer is the last AIMessage.
+        # LangChain / Gemini may return content as a list of blocks
+        # (e.g. [{"type": "text", "text": "..."}]) instead of a plain string.
+        # Normalise to a plain string so callers never get [object Object].
         final_msg = result["messages"][-1]
-        answer = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
+        raw_content = final_msg.content if hasattr(final_msg, "content") else ""
+        if isinstance(raw_content, list):
+            answer = " ".join(
+                part.get("text", "") if isinstance(part, dict) else str(part)
+                for part in raw_content
+            ).strip()
+        elif isinstance(raw_content, str):
+            answer = raw_content.strip()
+        else:
+            answer = str(raw_content).strip()
 
         logger.info(
             "product_advisor.done | session=%r tools=%s answer_len=%d",

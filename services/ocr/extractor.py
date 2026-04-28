@@ -1,15 +1,16 @@
-"""Image-to-text extractor with a Gemini-first fail-chain.
+"""Image-to-text extractor with a three-tier fail-chain.
 
-Two-tier on purpose, primary first:
+Tier priority:
 
-  1. **Google Gemini Vision** — when ``GOOGLE_API_KEY`` is set, this is the
-     default OCR engine. It handles curved labels, glare, mixed scripts,
-     hand-stamped batch / MFG / EXP fields, dense nutrition tables, and
-     small print on Indian pharma / grocery packs that Tesseract chokes
-     on. Same chain runs for both medicines and grocery items.
-  2. **Tesseract (`pytesseract`)** — local fallback. Used whenever Gemini
-     is unavailable (no API key, auth failure, rate limit, network error,
-     timeout, or empty response). Free, runs locally, fine for clean
+  1. **Google Gemini Vision** — when ``GOOGLE_API_KEY`` is set. Best quality
+     for curved labels, glare, mixed scripts (including Devanagari), hand-
+     stamped batch / MFG / EXP fields, and dense nutrition tables on Indian
+     pharma / grocery packs that Tesseract chokes on.
+  2. **LM Studio vision** (qwen3-vl / qwen2.5-vl) — when an LM Studio
+     server is reachable at LM_STUDIO_BASE_URL. Local, private, no API cost.
+     Used as a fallback when Gemini is unavailable or returns thin text.
+  3. **Tesseract (`pytesseract`)** — local CPU fallback. Used whenever both
+     cloud engines are unavailable. Free, runs locally, fine for clean
      printed text.
 
 The decision lives entirely inside :func:`extract_text` — callers never
@@ -115,20 +116,20 @@ async def extract_text(image_bytes: bytes) -> OcrResult:
 
     Strategy:
 
-    1. **Primary**: Google Gemini Vision (when ``GOOGLE_API_KEY`` is set).
+    1. **Google Gemini Vision** — when ``GOOGLE_API_KEY`` is set. Best quality
+       for multi-language labels, mixed scripts, and dense nutrition tables.
        Returns immediately on a strong response.
-    2. **Fallback**: local Tesseract. Runs on any Gemini failure or when
-       Gemini isn't configured.
+    2. **LM Studio vision** (qwen3-vl / qwen2.5-vl) — when LM Studio is
+       reachable at LM_STUDIO_BASE_URL. Local, private, no API cost.
+    3. **Tesseract** — local CPU fallback. Always available; lower quality on
+       glare / curved labels but never fails.
 
-    The status field tells callers how the chain unfolded. Actionable
-    cloud failures (auth, rate-limit) are always surfaced even when
-    Tesseract saved the day, so the client can prompt the operator to
-    fix the configuration.
+    The status field tells callers how the chain unfolded.
     """
     settings = get_settings()
 
-    # --- Primary: Gemini ----------------------------------------------------
-    primary_failure: str | None = None  # set when Gemini was tried and failed
+    # --- Tier 1: Google Gemini Vision (highest quality) ---------------------
+    primary_failure: str | None = None
     if settings.google_api_key:
         try:
             gemini = await asyncio.wait_for(
@@ -141,11 +142,9 @@ async def extract_text(image_bytes: bytes) -> OcrResult:
             )
             if _is_strong(gemini):
                 return _replace_status(gemini, "ok")
-            # Empty / thin response. Fall through to Tesseract — the
-            # local engine sometimes catches packs Gemini blanks on.
             primary_failure = "fallback_failed"
             logger.info(
-                "Gemini returned thin text (%d chars); trying Tesseract.",
+                "Gemini returned thin text (%d chars); trying LM Studio.",
                 len(gemini.text),
             )
         except asyncio.TimeoutError:
@@ -153,7 +152,44 @@ async def extract_text(image_bytes: bytes) -> OcrResult:
             logger.warning("Gemini OCR timed out after %.1fs.", _GEMINI_TIMEOUT_S)
         except Exception as exc:
             primary_failure = _classify_gemini_error(exc)
-            logger.warning("Gemini OCR failed (%s); trying Tesseract.", primary_failure)
+            logger.warning("Gemini OCR failed (%s); trying LM Studio.", primary_failure)
+
+    # --- Tier 2: LM Studio vision (local, fast, no API cost) ---------------
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            f"{settings.lm_studio_base_url}/models", method="GET"
+        )
+        with urllib.request.urlopen(req, timeout=settings.lm_studio_health_timeout_s) as r:
+            lm_available = r.status < 500
+    except Exception:
+        lm_available = False
+
+    if lm_available:
+        try:
+            lm_result = await asyncio.wait_for(
+                _run_lm_studio(
+                    image_bytes,
+                    base_url=settings.lm_studio_base_url,
+                    model=settings.lm_studio_vision_model,
+                    api_key=settings.lm_studio_api_key,
+                ),
+                timeout=settings.lm_studio_timeout_s,
+            )
+            if _is_strong(lm_result):
+                logger.info(
+                    "OCR: LM Studio vision succeeded (%d chars, conf=%.2f)",
+                    len(lm_result.text), lm_result.confidence,
+                )
+                return _replace_status(lm_result, primary_failure or "ok")
+            logger.info(
+                "OCR: LM Studio returned thin text (%d chars); trying Tesseract.",
+                len(lm_result.text),
+            )
+        except asyncio.TimeoutError:
+            logger.warning("OCR: LM Studio vision timed out after %.1fs.", settings.lm_studio_timeout_s)
+        except Exception as exc:
+            logger.warning("OCR: LM Studio vision failed (%s); trying Tesseract.", exc)
 
     # --- Fallback: Tesseract ------------------------------------------------
     tesseract = _run_tesseract(image_bytes)
@@ -293,6 +329,49 @@ def _run_tesseract(image_bytes: bytes) -> OcrResult:
         status = "ok"
 
     return OcrResult(text=text, engine="tesseract", confidence=confidence, status=status)
+
+
+async def _run_lm_studio(
+    image_bytes: bytes, *, base_url: str, model: str, api_key: str
+) -> OcrResult:
+    """
+    Call an LM Studio (or Ollama) vision model via the OpenAI-compatible API.
+
+    Uses the same OCR prompt as Gemini so output format is consistent.
+    Requires a vision-capable model to be loaded (e.g. qwen3-vl-8b,
+    qwen2.5-vl-7b-instruct, llava-v1.6, etc.).
+    """
+    import base64
+
+    from openai import AsyncOpenAI
+
+    b64 = base64.b64encode(image_bytes).decode()
+    mime_type = _detect_mime_type(image_bytes)
+
+    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime_type};base64,{b64}"},
+                    },
+                    {"type": "text", "text": _GEMINI_PROMPT},
+                ],
+            }
+        ],
+        max_tokens=1500,
+        temperature=0.0,
+    )
+    text = (response.choices[0].message.content or "").strip()
+    # Heuristic confidence: ratio of alphanumeric chars in response
+    alnum = sum(ch.isalnum() for ch in text)
+    confidence = min(0.95, alnum / max(len(text), 1))
+    status = "ok" if _is_strong(OcrResult(text=text, engine="lm_studio", confidence=confidence)) else "low_confidence"
+    return OcrResult(text=text, engine="lm_studio", confidence=confidence, status=status)
 
 
 async def _run_gemini(image_bytes: bytes, api_key: str, model: str) -> OcrResult:

@@ -126,6 +126,16 @@ class MedicineScanResponse(BaseModel):
     # Transparency
     notes: list[str] = Field(default_factory=list)
 
+    # Structured fields extracted from OCR (populated for image-only scans)
+    extracted_label: dict[str, Any] | None = Field(
+        default=None,
+        description="Structured label fields parsed by Gemini: brand, salt, batch, expiry, manufacturer",
+    )
+    ocr_text: str | None = Field(
+        default=None,
+        description="Raw OCR text extracted from the label image",
+    )
+
 
 # ---------------------------------------------------------------------------
 # Grocery verification schemas
