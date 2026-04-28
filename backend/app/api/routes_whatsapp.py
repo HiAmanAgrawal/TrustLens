@@ -1,15 +1,19 @@
 """WhatsApp webhook endpoints — wired to the Twilio adapter.
 
 Twilio sends inbound WhatsApp messages as POST form-data. This route parses
-them, decides the intent (image verification, code verification, follow-up
-question, onboarding, or greeting), runs the appropriate pipeline, and replies
-via the Twilio REST API.
+them, decides the intent (image scan, code verification, product follow-up,
+onboarding, or greeting), runs the appropriate pipeline, and replies via the
+Twilio REST API.
 
 MESSAGE ROUTING (in priority order):
-  1. Image         → verify_image pipeline
-  2. URL / barcode → verify_code pipeline
-  3. Text, active scan session exists → follow-up Q&A (Gemini)
-  4. Text, no scan session → LangGraph agent (onboarding / personalised greeting)
+  1. Image         → Phase 3 unified scan (grocery / medicine / prescription)
+                     → product context stored in Redis for follow-ups
+                     → falls back to legacy verify_image if Phase 3 errors
+  2. URL / barcode → legacy verify_code pipeline (medicine barcode check)
+  3. Text, Phase 3 product context active → LangGraph product advisor (with tools)
+  4. Text, legacy scan session active     → Gemini follow-up (medicine Q&A)
+  5. Text, no session                     → LangGraph conversation agent
+                                            (onboarding / personalised greeting)
 
 No echo detection needed — Twilio only fires webhooks for inbound messages.
 """
@@ -31,9 +35,13 @@ from services.whatsapp import session as session_store
 from services.whatsapp.adapters import twilio_wa as twilio_adapter
 from services.whatsapp.followup import answer_follow_up
 from services.whatsapp.formatter import (
+    format_advisor_reply,
     format_error,
     format_follow_up,
+    format_grocery_scan,
     format_info_only,
+    format_medicine_scan,
+    format_prescription_scan,
     format_verdict,
     format_welcome,
 )
@@ -146,7 +154,16 @@ async def _handle_image(
     account_sid: str,
     auth_token: str,
 ) -> str:
-    """Download the image, run the verification pipeline, store the session."""
+    """
+    Download the image, run the Phase 3 unified pipeline, store product context.
+
+    Phase 3 pipeline classifies the image as grocery / medicine / prescription,
+    stores a rich product context in Redis (2-hour TTL) for follow-up Q&A via
+    the LangGraph product advisor, and returns a formatted WhatsApp message.
+
+    Falls back to the legacy verify_image pipeline if Phase 3 raises an
+    unrecoverable error, so existing medicine-barcode users are never blocked.
+    """
     # Pick the first image URL.
     image_url = None
     for url, mime in zip(parsed.media_urls, parsed.media_types):
@@ -166,16 +183,79 @@ async def _handle_image(
     )
     logger.info("[%s] Image downloaded: %d bytes", parsed.sender_phone, len(image_bytes))
 
-    logger.info("[%s] Running verify_image pipeline...", parsed.sender_phone)
+    # ── Phase 3 unified scan ─────────────────────────────────────────────────
+    # Use the sender's WhatsApp ID as the session key so follow-up text
+    # messages in the same chat automatically reach the product advisor.
+    session_id = parsed.sender_phone
+
+    try:
+        from app.core.database import get_session_factory
+        from app.services.pipeline_service import run_unified_scan
+        from app.services.product_context import (
+            build_context_from_grocery_response,
+            build_context_from_medicine_response,
+            store_product_context,
+        )
+
+        logger.info("[%s] Running Phase 3 unified scan...", parsed.sender_phone)
+        factory = get_session_factory()
+        async with factory() as db:
+            try:
+                result = await run_unified_scan(
+                    db,
+                    image_bytes=image_bytes,
+                    user_id=None,
+                    lang="en",
+                )
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
+
+        logger.info(
+            "[%s] Phase 3 scan done — grocery=%s medicine=%s prescription=%s",
+            parsed.sender_phone,
+            result.grocery is not None,
+            result.medicine is not None,
+            result.prescription is not None,
+        )
+
+        # Store product context and format reply based on detected type.
+        if result.grocery:
+            ctx = build_context_from_grocery_response(result.grocery, session_id)
+            await store_product_context(session_id, ctx)
+            logger.info("[%s] Grocery context stored (session_id=%r)", parsed.sender_phone, session_id)
+            return format_grocery_scan(result.grocery)
+
+        if result.medicine:
+            ctx = build_context_from_medicine_response(result.medicine, session_id)
+            await store_product_context(session_id, ctx)
+            logger.info("[%s] Medicine context stored (session_id=%r)", parsed.sender_phone, session_id)
+            return format_medicine_scan(result.medicine)
+
+        if result.prescription:
+            # Prescriptions are read-only — no product context needed for Q&A.
+            logger.info("[%s] Prescription scan done (no context stored)", parsed.sender_phone)
+            return format_prescription_scan(result.prescription)
+
+        # Phase 3 couldn't classify — fall through to legacy pipeline below.
+        logger.warning("[%s] Phase 3 returned no classified result; trying legacy pipeline", parsed.sender_phone)
+
+    except Exception:
+        logger.exception(
+            "[%s] Phase 3 unified scan failed — falling back to legacy verify_image",
+            parsed.sender_phone,
+        )
+
+    # ── Legacy fallback (medicine barcode verification) ──────────────────────
+    logger.info("[%s] Running legacy verify_image pipeline...", parsed.sender_phone)
     verdict_response = await verify_image(image_bytes)
     verdict_dict = verdict_response.model_dump(mode="json")
-    logger.info("[%s] Pipeline done: verdict=%s, score=%s",
+    logger.info("[%s] Legacy pipeline done: verdict=%s score=%s",
                 parsed.sender_phone, verdict_dict.get("verdict"), verdict_dict.get("score"))
 
-    # Store session for follow-ups.
-    ocr_text = verdict_dict.get("ocr", {}).get("text") if verdict_dict.get("ocr") else None
+    ocr_text  = verdict_dict.get("ocr", {}).get("text")  if verdict_dict.get("ocr")  else None
     page_text = verdict_dict.get("page", {}).get("text") if verdict_dict.get("page") else None
-
     session_store.upsert(
         parsed.sender_phone,
         chat_id=parsed.sender_phone,
@@ -183,8 +263,7 @@ async def _handle_image(
         ocr_text=ocr_text,
         page_text=page_text,
     )
-    logger.info("[%s] Session stored for follow-ups", parsed.sender_phone)
-
+    logger.info("[%s] Legacy session stored for follow-ups", parsed.sender_phone)
     return format_verdict(verdict_dict)
 
 
@@ -228,36 +307,80 @@ async def _handle_text(
     Handle plain-text messages.
 
     Priority:
-      1. Active scan session exists → follow-up Q&A via Gemini.
-      2. No scan session → LangGraph agent (onboarding or personalised greeting).
-      3. Agent failure fallback → static welcome message.
+      1. Phase 3 product context active (Redis) → LangGraph product advisor
+         with tools (web search, health check, trust scoring, DB lookup).
+      2. Legacy scan session active (in-memory) → Gemini medicine Q&A.
+      3. No scan session → LangGraph conversation agent
+         (onboarding / personalised greeting).
+      4. Agent failure → static welcome fallback.
+
+    The Phase 3 path covers all products scanned via the unified pipeline
+    (grocery, medicine, prescription). The legacy path covers scans done via
+    the old verify_image / verify_code pipelines or if Phase 3 fell back.
     """
     settings = get_settings()
-    sess = session_store.get(parsed.sender_phone)
 
+    # ── Priority 1: Phase 3 product context → product advisor ────────────────
+    try:
+        from app.services.product_context import get_product_context
+        from app.agents.product_advisor.graph import run_product_advisor
+
+        product_ctx = await get_product_context(parsed.sender_phone)
+        if product_ctx:
+            logger.info(
+                "[%s] PRODUCT-ADVISOR: context found (scan_type=%r brand=%r), question=%r",
+                parsed.sender_phone,
+                product_ctx.get("scan_type"),
+                product_ctx.get("brand_name"),
+                text[:80],
+            )
+            result = await run_product_advisor(
+                text,
+                product_context=product_ctx,
+                session_id=parsed.sender_phone,
+            )
+            logger.info(
+                "[%s] PRODUCT-ADVISOR: done tools=%s answer_chars=%d error=%r",
+                parsed.sender_phone,
+                result.get("tools_called"),
+                len(result.get("answer") or ""),
+                result.get("error"),
+            )
+            return format_advisor_reply(
+                result.get("answer") or "I wasn't able to generate an answer. Please try again.",
+                result.get("tools_called"),
+            )
+    except Exception:
+        logger.exception(
+            "[%s] Product advisor failed — falling through to legacy or agent",
+            parsed.sender_phone,
+        )
+
+    # ── Priority 2: Legacy scan session → Gemini medicine Q&A ───────────────
+    sess = session_store.get(parsed.sender_phone)
     if sess is not None and sess.verdict is not None:
-        # User has an active scan session — treat as a follow-up question.
-        logger.info("[%s] FOLLOW-UP: session found, verdict=%s, question=%s",
-                    parsed.sender_phone, sess.verdict.get("verdict"), text[:80])
+        logger.info(
+            "[%s] LEGACY-FOLLOWUP: session found verdict=%r question=%r",
+            parsed.sender_phone, sess.verdict.get("verdict"), text[:80],
+        )
         google_key = settings.google_api_key
         if not google_key:
-            logger.warning("[%s] No GOOGLE_API_KEY configured for follow-ups", parsed.sender_phone)
+            logger.warning("[%s] No GOOGLE_API_KEY — cannot answer follow-up", parsed.sender_phone)
             return format_error(
-                "Follow-up questions require a Google API key. "
+                "Follow-up questions need a Google API key. "
                 "Please ask the admin to configure GOOGLE_API_KEY."
             )
-        logger.info("[%s] Calling Gemini for follow-up answer...", parsed.sender_phone)
         answer = await answer_follow_up(
             parsed.sender_phone,
             text,
             api_key=google_key,
             model_name=settings.google_vision_model,
         )
-        logger.info("[%s] Gemini answered (%d chars)", parsed.sender_phone, len(answer))
+        logger.info("[%s] Gemini follow-up answered (%d chars)", parsed.sender_phone, len(answer))
         return format_follow_up(answer)
 
-    # No active scan session — delegate to the conversational agent.
-    logger.info("[%s] No scan session; routing to agent (onboarding / greeting)", parsed.sender_phone)
+    # ── Priority 3: Conversational agent (onboarding / greeting) ────────────
+    logger.info("[%s] No scan context; routing to conversation agent", parsed.sender_phone)
     try:
         reply = await _run_agent(
             wa_id=parsed.sender_phone,
@@ -267,7 +390,7 @@ async def _handle_text(
         if reply:
             return reply
     except Exception:
-        logger.exception("[%s] Agent failed — falling back to welcome message", parsed.sender_phone)
+        logger.exception("[%s] Conversation agent failed — sending welcome fallback", parsed.sender_phone)
 
     return format_welcome()
 
